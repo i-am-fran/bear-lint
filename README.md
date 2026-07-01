@@ -78,7 +78,9 @@ Compare what Bear shows afterwards against the table above.
 
 ## A note on safety
 
-`bear_lint.py` overwrites notes in place. Before running `--all` on your real library, try it on a small tagged subset first, and know that Bear's own [version history](https://bear.app/faq/backup-restore/) (Pro) is your safety net if something looks wrong.
+**Back up first.** Export your Bear library before running this on your real notes: Bear → File → Export Notes. Bear's built-in [version history](https://bear.app/faq/backup-restore/) (Pro) also lets you roll back individual notes, but a full export gives you a snapshot you can restore from without Bear.
+
+Any note that gets modified will be updated by bearcli, which changes its modification date and moves it to the top of your note list. Running `--all` on a large library will reorder a lot of notes. Run on a small tagged subset first (`--all "#tag"`) to get a feel for the impact before touching everything.
 
 ## Limitations
 
