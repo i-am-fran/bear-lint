@@ -307,6 +307,37 @@ def collapse_blank_lines(lines, issues):
     return out
 
 
+def collapse_consecutive_hrs(lines, mask, issues):
+    out = []
+    i = 0
+    changed = False
+    while i < len(lines):
+        if not mask[i] and lines[i].strip() == "---":
+            j = i + 1
+            found_another = False
+            while j < len(lines):
+                if lines[j].strip() == "" or mask[j]:
+                    j += 1
+                elif not mask[j] and lines[j].strip() == "---":
+                    found_another = True
+                    j += 1
+                else:
+                    break
+            if found_another:
+                changed = True
+                out.append("---")
+                i = j
+            else:
+                out.append(lines[i])
+                i += 1
+        else:
+            out.append(lines[i])
+            i += 1
+    if changed:
+        issues.append(LintIssue(0, "consecutive-hrs", "Collapsed multiple consecutive horizontal rules into one"))
+    return out
+
+
 def ensure_single_trailing_newline(text, issues):
     stripped = text.rstrip("\n")
     if text != stripped + "\n":
@@ -356,6 +387,9 @@ def lint_note(text):
 
     lines = collapse_blank_lines(lines, issues)
 
+    mask = code_block_mask(lines)
+    lines = collapse_consecutive_hrs(lines, mask, issues)
+
     text_out = "\n".join(lines)
     text_out = ensure_single_trailing_newline(text_out, issues)
 
@@ -392,7 +426,8 @@ Some "straight quotes" and some “curly quotes” in the same note.
 Check out [[Some Note]] and this broken [[link.
 Tag test: #work and #project management without closing, plus #done#.
 ***
-Horizontal rule above should become ---.
+---
+Horizontal rules above should become a single ---.
 """
 
 # --- bearcli helper ---

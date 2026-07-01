@@ -16,7 +16,7 @@ A small Markdown linter for [Bear](https://bear.app) notes. It checks and fixes 
 | Bear tag format | Flags likely-unclosed multi-word tags and unnecessary `#tag#` wraps on single-word tags |
 | `[[Wiki links]]` | Flags unmatched or empty double brackets, and stray triple+ brackets like `[[[typo]]]` |
 | Trailing newline | Exactly one at the end of the note |
-| Horizontal rules | Normalised to `---` |
+| Horizontal rules | Normalised to `---`; consecutive rules collapsed into one |
 | Straight vs smart quotes | Flags a note that mixes both styles |
 
 ## Requirements
