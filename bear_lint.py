@@ -439,7 +439,11 @@ def lint_one(title):
     fixed, issues = lint_note(content)
 
     if fixed == content:
-        print(f"{title}: no issues.", file=sys.stderr)
+        if not issues:
+            print(f"{title}: no issues.", file=sys.stderr)
+        else:
+            print(f"{title}:", file=sys.stderr)
+            print_report(issues)
         return
 
     try:
@@ -460,7 +464,10 @@ def lint_all(query=None):
     except BearcliError as e:
         sys.exit(f"bear_lint: {e}")
 
-    notes = json.loads(out)
+    try:
+        notes = json.loads(out)
+    except json.JSONDecodeError as e:
+        sys.exit(f"bear_lint: could not parse bearcli output: {e}\nRaw output: {out[:200]!r}")
 
     if not notes:
         print("No notes found.", file=sys.stderr)
@@ -488,6 +495,9 @@ def lint_all(query=None):
         checked += 1
 
         if fixed == content:
+            if issues:
+                print(f"\n{title}:", file=sys.stderr)
+                print_report(issues)
             continue
 
         try:
