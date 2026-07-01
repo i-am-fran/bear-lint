@@ -1,8 +1,6 @@
 # bear-lint
 
-A small Markdown linter for [Bear](https://bear.app) notes, built to run from a macOS Shortcut rather than the terminal. It checks and fixes common Markdown inconsistencies (bullet markers, emphasis style, checklist syntax, heading structure, tags, and more).
-
-The Python side is two small, dependency-free scripts, `bear_lint_single.py` and `bear_lint_all.py`, one per Shortcut, that just transform text: Markdown in, fixed Markdown out. They share the same rules and behaviour; they're kept as separate files purely so each Shortcut has its own clearly-named script to point at. Finding notes and writing the result back is handled entirely by Bear's own native Shortcuts actions, so there's no CLI, no API keys, and nothing else to install.
+A small Markdown linter for [Bear](https://bear.app) notes. It checks and fixes common Markdown inconsistencies — bullet markers, emphasis style, checklist syntax, heading structure, tags, and more — by reading and writing your notes directly via `bearcli`.
 
 ## What it checks
 
@@ -23,9 +21,8 @@ The Python side is two small, dependency-free scripts, `bear_lint_single.py` and
 
 ## Requirements
 
-- macOS with Bear installed
-- Python 3.8+ (preinstalled on macOS)
-- The Shortcuts app (preinstalled on macOS)
+- macOS with Bear 2.8 or later installed
+- Python 3.8+ (pre-installed on macOS)
 
 ## Installation
 
@@ -33,61 +30,44 @@ The Python side is two small, dependency-free scripts, `bear_lint_single.py` and
 git clone https://github.com/<your-username>/bear-lint.git
 ```
 
-Note where you cloned it, you'll need the full path when setting up the Shortcuts below.
-
-## Try it without touching Bear
+## Usage
 
 ```bash
-python3 bear_lint_single.py --selftest
+python3 bear_lint.py "Note Title"        # lint one note by title
+python3 bear_lint.py --all               # lint all notes (prompts for confirmation)
+python3 bear_lint.py --all "#tag"        # lint notes matching a Bear search query
+python3 bear_lint.py --selftest          # sanity check, no Bear needed
 ```
 
-This runs the checks against a bundled sample note and prints the fixed text plus a report, so you can see exactly what it does before wiring it up to anything. `bear_lint_all.py --selftest` does the same thing, they're identical under the hood.
+Title matching is case-insensitive. Issue reports go to stderr; exit code is 0 on success.
 
-You can also pipe any note text through either one directly:
+## Try it without touching your notes
 
 ```bash
-cat some-note.md | python3 bear_lint_single.py
+python3 bear_lint.py --selftest
 ```
 
-Fixed Markdown comes out on stdout; the list of issues found goes to stderr, so the two never get mixed together.
-
-## Set up the Shortcuts
-
-This repo includes two ready-made Shortcuts:
-
-- **Bear Lint (One Note).shortcut**: search for and pick a single note, lint it, write it back.
-- **Bear Lint (All Notes).shortcut**: same, but loops over every note matched by a search term.
-
-To install one: double-click the `.shortcut` file (or open it via the Shortcuts app) to import it, then open its **Run Shell Script** step and update the path so it points at wherever you cloned this repo, e.g.:
-
-```
-/usr/bin/python3 "/path/to/bear-lint/bear_lint_single.py"
-```
-
-**One-time setup:** Shortcuts app → menu bar **Shortcuts → Settings → Advanced** → turn on **Allow Running Scripts**. Without this, the Run Shell Script step will refuse to run.
-
-Run "All Notes" on a small tagged subset first before trusting it with your whole library.
-
-**Troubleshooting**
-
-- If the shell script step can't find `python3` or the script file, double-check the absolute path, Shortcuts runs with a minimal environment and won't pick up your shell's PATH.
-- If file access fails silently, check **System Settings → Privacy & Security → Full Disk Access** and enable it for Shortcuts.
-- Locked/encrypted Bear notes can't be read or written by Shortcuts, they'll be skipped.
-- The `h1-on-title-line` flag (a literal `#` on line 1) will likely never fire through the Shortcuts path, since Bear splits a note into Title and Text before the script sees it. It only matters if you're linting exported `.md` files directly.
-
-## A note on safety
-
-Neither script touches Bear on its own, only text handed to it. But the Shortcuts overwrite the note when they write back, and there's no built-in backup step, on purpose, to keep things simple. Before running "All Notes" on your real library for the first time: try it on a couple of test notes first (see [Testing](#testing) below), and know that Bear's own [version history](https://bear.app/faq/backup-restore/) (Pro) is your safety net if something looks wrong afterwards.
+This runs all rules against a bundled sample note and prints the fixed text plus a report so you can see exactly what it does.
 
 ## Testing
 
-`test-note.md` in this repo is a single note deliberately built to trigger every rule at once, bullet markers, checklist syntax, heading issues, tags, wiki links, quotes, the works. Import it into Bear (`File → Import → Files/Folders...`, or just drag the file onto Bear's note list) and run either Shortcut against it before trusting either one with your real notes. Compare what you see against the table above.
+`test-note.md` in this repo is a single note deliberately built to trigger every rule at once. Import it into Bear (`File → Import → Files/Folders…`, or drag it onto Bear's note list), then run:
+
+```bash
+python3 bear_lint.py "Bear Lint Test Note"
+```
+
+Compare what Bear shows afterwards against the table above.
+
+## A note on safety
+
+`bear_lint.py` overwrites notes in place. Before running `--all` on your real library, try it on a small tagged subset first, and know that Bear's own [version history](https://bear.app/faq/backup-restore/) (Pro) is your safety net if something looks wrong.
 
 ## Limitations
 
-- Heuristic-based, not a full Markdown parser. It handles fenced code blocks and inline code spans, but very unusual formatting may confuse a rule or two, especially the tag-format check, which flags likely issues for you to confirm rather than auto-fixing them.
-- No dry-run/diff step baked in, the Shortcut writes the fixed text straight back. Add a **Show Result** action between the Run Shell Script and Add Text to Note steps if you want to review first.
-- A few rules are report-only by design (duplicate/title H1s, tag format, wiki-link problems, quote consistency), because auto-fixing them risks changing the note's actual structure or meaning rather than just its style.
+- Heuristic-based, not a full Markdown parser. Handles fenced code blocks and inline code spans, but very unusual formatting may confuse a rule or two — especially the tag-format check, which flags likely issues for you to confirm rather than auto-fixing.
+- A few rules are report-only by design (duplicate/title H1s, tag format, wiki-link problems, quote consistency), because auto-fixing them risks changing the note's actual structure or meaning.
+- Locked/encrypted Bear notes are skipped automatically.
 
 ## Contributing
 
