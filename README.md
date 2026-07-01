@@ -51,11 +51,16 @@ After either, reload your shell and `bear-lint --help` will work.
 bear-lint --help                 # show all commands
 bear-lint <note-id>              # lint one note by ID
 bear-lint --all                  # lint all notes (prompts for confirmation)
+bear-lint -a "#tag"              # -a is a short alias for --all
 bear-lint --all "#tag"           # lint notes matching a Bear search query
 bear-lint --selftest             # sanity check, no Bear needed
+bear-lint <note-id> -o           # lint one note and also save the report as a Bear note
+bear-lint --all "#tag" -o        # same, for a batch run
 ```
 
 Get a note's ID from `bearcli list` or `bearcli search "query"`. Output shows `Title (id): N issue(s) fixed`. Issue reports go to stderr; exit code is 0 on success.
+
+Add `-o` / `--output` to also save the report inside Bear: a new note per run, titled `Bear Lint Report — <timestamp>` and tagged `#bear-lint`, containing the same text as the stderr output. No note is created if there's nothing to report (aborted run, or no notes matched the query).
 
 ## Try it without touching your notes
 

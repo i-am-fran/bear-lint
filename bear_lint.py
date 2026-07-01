@@ -3,10 +3,10 @@
 bear_lint.py - Markdown lint/fix for Bear notes.
 
 USAGE
-  bear_lint.py <note-id>           # lint one note by ID
-  bear_lint.py --all               # lint all notes (prompts for confirmation)
-  bear_lint.py --all "#tag"        # lint notes matching a Bear search query
-  bear_lint.py --selftest          # sanity check, no Bear needed
+  bear_lint.py <note-id> [-o]         # lint one note by ID, optionally save a report note
+  bear_lint.py --all|-a [-o]          # lint all notes (prompts for confirmation)
+  bear_lint.py --all|-a "#tag" [-o]   # lint notes matching a Bear search query
+  bear_lint.py --selftest             # sanity check, no Bear needed
 """
 
 import json
@@ -16,6 +16,7 @@ import shutil
 import subprocess
 import sys
 from dataclasses import dataclass
+from datetime import datetime
 
 BEARCLI_FALLBACK = "/Applications/Bear.app/Contents/MacOS/bearcli"
 
@@ -397,15 +398,20 @@ def lint_note(text):
     return text_out, issues
 
 
-def print_report(issues, fixed=True):
+def print_report(issues, fixed=True, capture=None):
+    def emit(text):
+        print(text, file=sys.stderr)
+        if capture is not None:
+            capture.append(text)
+
     if not issues:
-        print("No issues found.", file=sys.stderr)
+        emit("No issues found.")
         return
     label = "issue(s) fixed" if fixed else "issue(s) found (manual attention needed)"
-    print(f"{len(issues)} {label}:", file=sys.stderr)
+    emit(f"{len(issues)} {label}:")
     for i in issues:
         where = f"L{i.line}" if i.line else "note"
-        print(f"  [{where}] {i.rule}: {i.message}", file=sys.stderr)
+        emit(f"  [{where}] {i.rule}: {i.message}")
 
 
 SAMPLE_NOTE = """# My Project Notes
@@ -463,10 +469,29 @@ def bearcli(*args, stdin=None):
     return result.stdout
 
 
+def write_report_note(content):
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M")
+    title = f"Bear Lint Report — {timestamp}"
+    # Fenced so stray "#" in issue messages (e.g. quoted heading markers) aren't
+    # parsed as Bear tags, and so headings/emphasis in the transcript stay inert.
+    body = f"```\n{content}```"
+    try:
+        bearcli("create", title, "--tags", "bear-lint", stdin=body)
+    except BearcliError as e:
+        print(f"bear_lint: could not create report note: {e}", file=sys.stderr)
+        return
+    print(f"Report note created: {title}", file=sys.stderr)
+
+
 # --- CLI commands ---
 
 
-def lint_one(note_id):
+def lint_one(note_id, capture=None):
+    def emit(text):
+        print(text, file=sys.stderr)
+        if capture is not None:
+            capture.append(text)
+
     try:
         title = bearcli("show", note_id, "--fields", "title").strip()
         content = bearcli("cat", note_id)
@@ -478,10 +503,10 @@ def lint_one(note_id):
 
     if fixed == content:
         if not issues:
-            print(f"{label}: no issues.", file=sys.stderr)
+            emit(f"{label}: no issues.")
         else:
-            print(f"{label}:", file=sys.stderr)
-            print_report(issues, fixed=False)
+            emit(f"{label}:")
+            print_report(issues, fixed=False, capture=capture)
         return
 
     try:
@@ -489,11 +514,16 @@ def lint_one(note_id):
     except BearcliError as e:
         sys.exit(f"bear_lint: could not write note: {e}")
 
-    print(f"{label}:", file=sys.stderr)
-    print_report(issues)
+    emit(f"{label}:")
+    print_report(issues, capture=capture)
 
 
-def lint_all(query=None):
+def lint_all(query=None, capture=None):
+    def emit(text):
+        print(text, file=sys.stderr)
+        if capture is not None:
+            capture.append(text)
+
     try:
         if query:
             out = bearcli("search", query, "--format", "json", "--fields", "id,title")
@@ -526,7 +556,7 @@ def lint_all(query=None):
         try:
             content = bearcli("cat", note_id)
         except BearcliError as e:
-            print(f"{title}: skipped ({e})", file=sys.stderr)
+            emit(f"{title}: skipped ({e})")
             continue
 
         fixed, issues = lint_note(content)
@@ -534,32 +564,32 @@ def lint_all(query=None):
 
         if fixed == content:
             if issues:
-                print(f"\n{title}:", file=sys.stderr)
-                print_report(issues, fixed=False)
+                emit(f"\n{title}:")
+                print_report(issues, fixed=False, capture=capture)
             continue
 
         try:
             bearcli("overwrite", note_id, "--no-update-modified", stdin=fixed)
         except BearcliError as e:
-            print(f"{title}: could not write ({e})", file=sys.stderr)
+            emit(f"{title}: could not write ({e})")
             continue
 
-        print(f"\n{title}:", file=sys.stderr)
-        print_report(issues)
+        emit(f"\n{title}:")
+        print_report(issues, capture=capture)
         fixed_count += 1
 
-    print(f"\n{checked} notes checked, {fixed_count} fixed.", file=sys.stderr)
+    emit(f"\n{checked} notes checked, {fixed_count} fixed.")
 
 
 HELP = """\
 bear-lint — Markdown linter for Bear notes
 
 USAGE
-  bear-lint <note-id>          Lint one note by ID. Output: "Title (id): N issue(s) fixed".
-  bear-lint --all [query]      Lint all notes, or notes matching a Bear search query.
-                               Without a query, prompts for confirmation first.
-  bear-lint --selftest         Run rules against a built-in sample note. No Bear needed.
-  bear-lint --help             Show this message.
+  bear-lint <note-id> [-o]        Lint one note by ID. Output: "Title (id): N issue(s) fixed".
+  bear-lint --all|-a [query] [-o] Lint all notes, or notes matching a Bear search query.
+                                  Without a query, prompts for confirmation first.
+  bear-lint --selftest            Run rules against a built-in sample note. No Bear needed.
+  bear-lint --help                Show this message.
 
 GETTING A NOTE ID
   bearcli list --fields id,title
@@ -570,6 +600,10 @@ OUTPUT
   Auto-fixed issues are labelled "issue(s) fixed".
   Report-only issues (tag format, wiki links, duplicate H1, quote style) are labelled
   "issue(s) found (manual attention needed)" — the note is not modified for these.
+
+  -o, --output   Also save the report as a new Bear note, tagged #bear-lint and
+                 titled "Bear Lint Report — <timestamp>". Skipped if there's nothing
+                 to report (e.g. the run was aborted or no notes matched).
 
 REQUIRES
   Bear 2.8+ (provides bearcli at /Applications/Bear.app/Contents/MacOS/bearcli)
@@ -591,11 +625,24 @@ def main():
         sys.stdout.write(fixed)
         return
 
-    if args[0] == "--all":
+    output_note = "-o" in args or "--output" in args
+    args = [a for a in args if a not in ("-o", "--output")]
+    if not args:
+        sys.exit("bear_lint: missing note ID or --all")
+
+    capture = [] if output_note else None
+
+    if args[0] in ("--all", "-a"):
         query = args[1] if len(args) > 1 else None
-        lint_all(query)
+        lint_all(query, capture=capture)
     else:
-        lint_one(args[0])
+        lint_one(args[0], capture=capture)
+
+    if output_note:
+        if capture:
+            write_report_note("\n".join(capture) + "\n")
+        else:
+            print("bear_lint: nothing to report — no note created.", file=sys.stderr)
 
 
 if __name__ == "__main__":
