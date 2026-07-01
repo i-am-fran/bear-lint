@@ -22,7 +22,7 @@ BEARCLI_FALLBACK = "/Applications/Bear.app/Contents/MacOS/bearcli"
 
 # --- lint engine (unchanged) ---
 
-HEADING_RE = re.compile(r"^(#{1,6})(\s*)(.*)$")
+HEADING_RE = re.compile(r"^(#{1,6})(?=\s|$)(\s*)(.*)$")
 FENCE_RE = re.compile(r"^\s*(`{3,}|~{3,})")
 HR_RE = re.compile(r"^[ \t]{0,3}([-*_])[ \t]*(?:\1[ \t]*){2,}$")
 INLINE_CODE_RE = re.compile(r"`[^`\n]+`")
@@ -36,8 +36,9 @@ QUOTE_MARKER_RE = re.compile(r"^([ \t]{0,3}(?:>[ \t]*)*>)([^ \t\n].*)$")
 BOLD_UNDERSCORE_RE = re.compile(r"__(?!\s)([^_\n]+?)(?<!\s)__")
 ITALIC_UNDERSCORE_RE = re.compile(r"(?<![\w_])_(?!_)([^_\n]+?)(?<!\s)_(?![\w_])")
 CLOSED_TAG_RE = re.compile(r"#([^#\s][^#\n]*?)#")
-UNCLOSED_TAG_RE = re.compile(r"#([a-zA-Z][\w/-]*)((?:[ \t]+[a-zA-Z][\w/-]*){1,5})")
 SMART_QUOTE_CHARS = "“”‘’"
+SMART_QUOTE_MAP = {"“": '"', "”": '"', "‘": "'", "’": "'"}
+SMART_QUOTE_RE = re.compile("[" + SMART_QUOTE_CHARS + "]")
 
 
 @dataclass
@@ -70,7 +71,8 @@ def code_block_mask(lines):
 def frontmatter_mask(lines):
     # YAML frontmatter: a "---" on line 1 and a matching closing "---" later.
     # Everything in between (both delimiters included) is treated like a
-    # fenced code block - no rule should reformat it.
+    # fenced code block - no rule should reformat its content, aside from
+    # remove_frontmatter_blank_lines() which runs before any mask is built.
     mask = [False] * len(lines)
     if not lines or lines[0].strip() != "---":
         return mask
@@ -80,6 +82,19 @@ def frontmatter_mask(lines):
                 mask[j] = True
             return mask
     return mask
+
+
+def remove_frontmatter_blank_lines(lines, issues):
+    fm_mask = frontmatter_mask(lines)
+    if not any(fm_mask):
+        return lines
+    out = []
+    for idx, line in enumerate(lines):
+        if fm_mask[idx] and line.strip() == "":
+            issues.append(LintIssue(idx + 1, "frontmatter-blank-line", "Removed blank line inside YAML frontmatter"))
+            continue
+        out.append(line)
+    return out
 
 
 def protected_mask(lines):
@@ -174,6 +189,19 @@ def normalize_emphasis(line):
     return restore_inline_code(new, spans), changed
 
 
+def normalize_quotes(line):
+    protected, spans = protect_inline_code(line)
+    changed = False
+
+    def repl(m):
+        nonlocal changed
+        changed = True
+        return SMART_QUOTE_MAP[m.group(0)]
+
+    new = SMART_QUOTE_RE.sub(repl, protected)
+    return restore_inline_code(new, spans), changed
+
+
 def process_headings(lines, mask):
     issues = []
     if not lines:
@@ -213,24 +241,20 @@ def process_headings(lines, mask):
     return out, issues
 
 
-def check_title_heading(lines, issues):
-    if not lines:
-        return
-    m = HEADING_RE.match(lines[0])
-    if m and m.group(1):
-        issues.append(
-            LintIssue(
-                1,
-                "h1-on-title-line",
-                "Line 1 starts with '#'. Bear treats line 1 as the note title regardless, "
-                "but removing the '#' would also turn it from a real heading into a plain "
-                "paragraph, so this is left for you to decide rather than auto-fixed.",
-            )
-        )
-
-
 def check_duplicate_h1(lines, mask, issues):
-    for idx, line in enumerate(lines[1:], start=2):
+    if mask and mask[0]:
+        # Frontmatter present: Bear's line-1 "title" is the frontmatter
+        # delimiter itself, so the structural title is really the first
+        # non-blank line after the frontmatter closes - skip blank lines
+        # too, not just masked ones.
+        title_idx = 0
+        while title_idx < len(mask) and (mask[title_idx] or lines[title_idx].strip() == ""):
+            title_idx += 1
+    else:
+        title_idx = 0
+    for idx, line in enumerate(lines, start=1):
+        if idx - 1 == title_idx:
+            continue
         if idx - 1 < len(mask) and mask[idx - 1]:
             continue
         m = HEADING_RE.match(line)
@@ -250,20 +274,6 @@ def check_tags(lines, mask, issues):
         if idx == 1 or (idx - 1 < len(mask) and mask[idx - 1]):
             continue
         protected, _ = protect_inline_code(raw)
-        masked = CLOSED_TAG_RE.sub(lambda m: "#" + "\x02" * (len(m.group(0)) - 2) + "#", protected)
-
-        for m in UNCLOSED_TAG_RE.finditer(masked):
-            if masked[m.end() : m.end() + 1] == "#":
-                continue
-            phrase = (m.group(1) + m.group(2)).strip()
-            issues.append(
-                LintIssue(
-                    idx,
-                    "tag-format",
-                    f'Possible unclosed multi-word tag "#{phrase}" - Bear needs "#{phrase}#" '
-                    "to tag the whole phrase (please verify manually)",
-                )
-            )
 
         for m in CLOSED_TAG_RE.finditer(protected):
             if " " not in m.group(1) and "\t" not in m.group(1):
@@ -300,25 +310,6 @@ def check_wiki_links(lines, mask, issues):
             for m in CLEAN_WIKILINK_RE.finditer(line):
                 if not m.group(1).strip():
                     issues.append(LintIssue(idx, "wiki-link", "Empty [[ ]] wiki link"))
-
-
-def check_quotes(lines, mask, issues):
-    straight = 0
-    smart = 0
-    for idx, line in enumerate(lines, start=1):
-        if idx - 1 < len(mask) and mask[idx - 1]:
-            continue
-        protected, _ = protect_inline_code(line)
-        straight += protected.count('"') + protected.count("'")
-        smart += sum(protected.count(c) for c in SMART_QUOTE_CHARS)
-    if straight and smart:
-        issues.append(
-            LintIssue(
-                0,
-                "quote-consistency",
-                f"Note mixes straight ({straight}) and curly ({smart}) quotes - pick one style",
-            )
-        )
 
 
 def collapse_blank_lines(lines, issues):
@@ -462,6 +453,8 @@ def lint_note(text):
     text = text.replace("\r\n", "\n").replace("\r", "\n")
     lines = text.split("\n")
 
+    lines = remove_frontmatter_blank_lines(lines, issues)
+
     mask = protected_mask(lines)
     lines = strip_trailing_ws(lines, issues)
 
@@ -490,7 +483,13 @@ def lint_note(text):
             issues.append(LintIssue(i + 1, "emphasis-marker", "Converted __/_ emphasis to **/*"))
         lines[i] = new_line
 
-    check_title_heading(lines, issues)
+    for i, line in enumerate(lines):
+        if mask[i]:
+            continue
+        new_line, changed = normalize_quotes(line)
+        if changed:
+            issues.append(LintIssue(i + 1, "quote-style", "Converted curly quotes to straight quotes"))
+        lines[i] = new_line
 
     mask = protected_mask(lines)
     lines, heading_issues = process_headings(lines, mask)
@@ -500,7 +499,6 @@ def lint_note(text):
     check_duplicate_h1(lines, mask, issues)
     check_tags(lines, mask, issues)
     check_wiki_links(lines, mask, issues)
-    check_quotes(lines, mask, issues)
 
     lines = collapse_blank_lines(lines, issues)
 
@@ -721,7 +719,7 @@ GETTING A NOTE ID
 OUTPUT
   Issue reports go to stderr. Exit code is 0 on success.
   Auto-fixed issues are labelled "issue(s) fixed".
-  Report-only issues (tag format, wiki links, duplicate H1, quote style) are labelled
+  Report-only issues (tag format, wiki links, duplicate H1) are labelled
   "issue(s) found (manual attention needed)" — the note is not modified for these.
 
   -o, --output   Also save the report as a new Bear note, tagged #bear-lint and

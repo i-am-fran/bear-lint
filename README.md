@@ -9,15 +9,16 @@ A small Markdown linter for [Bear](https://bear.app) notes. It checks and fixes 
 | Bullet markers | Standardises on `-`, flags `*` / `+` |
 | Bold/italic markers | Standardises on `**bold**` / `*italic*`, flags `__`/`_` |
 | Heading hierarchy | Flags skipped levels, fixes missing blank lines before/after headings |
-| Duplicate H1 | Flags a `#` on line 1 and any other H1 further down, left for you to fix by hand since removing a heading marker changes real Markdown semantics |
+| Duplicate H1 | Flags an extra `#` heading further down the note (the title-equivalent line — line 1, or the first line after YAML frontmatter — is exempt), left for you to fix by hand since demoting a heading changes real Markdown semantics |
 | Checklist syntax | Normalises to `- [ ] ` / `- [x] ` |
 | Trailing whitespace | Stripped |
 | Multiple blank lines | Collapsed to one |
-| Bear tag format | Flags likely-unclosed multi-word tags and unnecessary `#tag#` wraps on single-word tags |
+| Bear tag format | Flags unnecessary `#tag#` wraps on single-word tags |
 | `[[Wiki links]]` | Flags unmatched or empty double brackets, and stray triple+ brackets like `[[[typo]]]` |
 | Trailing newline | Exactly one at the end of the note |
 | Horizontal rules | Normalised to `---`; consecutive rules collapsed into one; a blank line is enforced above and below |
-| Straight vs smart quotes | Flags a note that mixes both styles |
+| Curly quotes | Converted to straight quotes (`"`/`'`) |
+| YAML frontmatter | Blank lines inside a frontmatter block are removed |
 | Blockquote spacing | Adds the missing space after `>`, e.g. `>Text` → `> Text` |
 | List spacing | Adds a blank line separating a list from the paragraph before/after it |
 
@@ -91,8 +92,8 @@ Writes use bearcli's `--no-update-modified` flag, so fixed notes keep their orig
 
 ## Limitations
 
-- Heuristic-based, not a full Markdown parser. Handles fenced code blocks, inline code spans, and YAML frontmatter (a `---` on line 1 with a matching closing `---`) as protected regions no rule will reformat, but very unusual formatting may confuse a rule or two — especially the tag-format check, which flags likely issues for you to confirm rather than auto-fixing.
-- A few rules are report-only by design (duplicate/title H1s, tag format, wiki-link problems, quote consistency), because auto-fixing them risks changing the note's actual structure or meaning.
+- Heuristic-based, not a full Markdown parser. Handles fenced code blocks, inline code spans, and YAML frontmatter (a `---` on line 1 with a matching closing `---`) as protected regions (aside from stripping blank lines inside frontmatter), but very unusual formatting may confuse a rule or two.
+- A few rules are report-only by design (duplicate H1, tag format, wiki-link problems), because auto-fixing them risks changing the note's actual structure or meaning.
 - Locked/encrypted Bear notes are skipped automatically.
 
 ## Contributing
