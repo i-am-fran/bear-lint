@@ -30,13 +30,29 @@ A small Markdown linter for [Bear](https://bear.app) notes. It checks and fixes 
 git clone https://github.com/<your-username>/bear-lint.git
 ```
 
+Then make it runnable as `bear-lint` from anywhere. Pick one:
+
+**Alias** (add to `~/.zshrc`):
+```bash
+alias bear-lint='python3 /path/to/bear-lint/bear_lint.py'
+```
+
+**Symlink** (makes it a first-class command on your PATH):
+```bash
+chmod +x /path/to/bear-lint/bear_lint.py
+ln -s /path/to/bear-lint/bear_lint.py /usr/local/bin/bear-lint
+```
+
+After either, reload your shell and `bear-lint --help` will work.
+
 ## Usage
 
 ```bash
-python3 bear_lint.py <note-id>           # lint one note by ID
-python3 bear_lint.py --all               # lint all notes (prompts for confirmation)
-python3 bear_lint.py --all "#tag"        # lint notes matching a Bear search query
-python3 bear_lint.py --selftest          # sanity check, no Bear needed
+bear-lint --help                 # show all commands
+bear-lint <note-id>              # lint one note by ID
+bear-lint --all                  # lint all notes (prompts for confirmation)
+bear-lint --all "#tag"           # lint notes matching a Bear search query
+bear-lint --selftest             # sanity check, no Bear needed
 ```
 
 Get a note's ID from `bearcli list` or `bearcli search "query"`. Output shows `Title (id): N issue(s) fixed`. Issue reports go to stderr; exit code is 0 on success.

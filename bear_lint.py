@@ -516,8 +516,37 @@ def lint_all(query=None):
     print(f"\n{checked} notes checked, {fixed_count} fixed.", file=sys.stderr)
 
 
+HELP = """\
+bear-lint — Markdown linter for Bear notes
+
+USAGE
+  bear-lint <note-id>          Lint one note by ID. Output: "Title (id): N issue(s) fixed".
+  bear-lint --all [query]      Lint all notes, or notes matching a Bear search query.
+                               Without a query, prompts for confirmation first.
+  bear-lint --selftest         Run rules against a built-in sample note. No Bear needed.
+  bear-lint --help             Show this message.
+
+GETTING A NOTE ID
+  bearcli list --fields id,title
+  bearcli search "my note" --fields id,title
+
+OUTPUT
+  Issue reports go to stderr. Exit code is 0 on success.
+  Auto-fixed issues are labelled "issue(s) fixed".
+  Report-only issues (tag format, wiki links, duplicate H1, quote style) are labelled
+  "issue(s) found (manual attention needed)" — the note is not modified for these.
+
+REQUIRES
+  Bear 2.8+ (provides bearcli at /Applications/Bear.app/Contents/MacOS/bearcli)
+"""
+
+
 def main():
     args = sys.argv[1:]
+
+    if not args or "--help" in args or "-h" in args:
+        print(HELP, end="")
+        sys.exit(0 if args else 1)
 
     if "--selftest" in args:
         fixed, issues = lint_note(SAMPLE_NOTE)
@@ -526,9 +555,6 @@ def main():
         print("\n--- fixed text ---", file=sys.stderr)
         sys.stdout.write(fixed)
         return
-
-    if not args:
-        sys.exit("Usage: bear_lint.py <note-id> | --all [query] | --selftest")
 
     if args[0] == "--all":
         query = args[1] if len(args) > 1 else None
