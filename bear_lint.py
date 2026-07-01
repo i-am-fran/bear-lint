@@ -32,6 +32,7 @@ LIST_ITEM_RE = re.compile(
     r"(?:\[(?P<box>[ xX])\](?P<gap2>[ \t]*))?"
     r"(?P<text>.*)$"
 )
+QUOTE_MARKER_RE = re.compile(r"^([ \t]{0,3}(?:>[ \t]*)*>)([^ \t\n].*)$")
 BOLD_UNDERSCORE_RE = re.compile(r"__(?!\s)([^_\n]+?)(?<!\s)__")
 ITALIC_UNDERSCORE_RE = re.compile(r"(?<![\w_])_(?!_)([^_\n]+?)(?<!\s)_(?![\w_])")
 CLOSED_TAG_RE = re.compile(r"#([^#\s][^#\n]*?)#")
@@ -120,6 +121,16 @@ def process_list_checklist(line, lineno, issues):
         return new_line
 
     return f"{indent}- {text}"
+
+
+def process_blockquote_spacing(line, lineno, issues):
+    protected, spans = protect_inline_code(line)
+    m = QUOTE_MARKER_RE.match(protected)
+    if not m:
+        return line
+    marker, rest = m.group(1), m.group(2)
+    issues.append(LintIssue(lineno, "blockquote-spacing", 'Inserted missing space after ">"'))
+    return restore_inline_code(f"{marker} {rest}", spans)
 
 
 def normalize_emphasis(line):
@@ -339,6 +350,85 @@ def collapse_consecutive_hrs(lines, mask, issues):
     return out
 
 
+def ensure_hr_spacing(lines, mask, issues):
+    out = []
+    n = len(lines)
+    for i, line in enumerate(lines):
+        if mask[i] or line.strip() != "---":
+            out.append(line)
+            continue
+        if out and out[-1].strip() != "":
+            out.append("")
+            issues.append(LintIssue(i + 1, "hr-spacing", "Inserted blank line before horizontal rule"))
+        out.append(line)
+        nxt = lines[i + 1] if i + 1 < n else None
+        if nxt is not None and nxt.strip() != "":
+            out.append("")
+            issues.append(LintIssue(i + 1, "hr-spacing", "Inserted blank line after horizontal rule"))
+    return out
+
+
+def ensure_list_spacing(lines, mask, issues):
+    n = len(lines)
+
+    def is_list_line(idx):
+        if idx < 0 or idx >= n or mask[idx]:
+            return False
+        line = lines[idx]
+        if is_hr(line):
+            return False
+        m = LIST_ITEM_RE.match(line)
+        if not m:
+            return False
+        return m.group("box") is not None or m.group("gap1") != ""
+
+    def is_continuation(idx):
+        # Indented, non-list text right after a list item is treated as that
+        # item's wrapped content, not a new paragraph - so it doesn't end the list.
+        if idx < 0 or idx >= n or mask[idx] or is_list_line(idx):
+            return False
+        line = lines[idx]
+        return line.strip() != "" and line != line.lstrip()
+
+    out = []
+    in_list = False
+    last_list_lineno = None
+    for i, line in enumerate(lines):
+        if mask[i]:
+            if in_list and out and out[-1].strip() != "":
+                out.append("")
+                issues.append(LintIssue(last_list_lineno, "list-spacing", "Inserted blank line after list"))
+            out.append(line)
+            in_list = False
+            continue
+
+        if line.strip() == "":
+            out.append(line)
+            in_list = False
+            continue
+
+        if is_list_line(i):
+            if not in_list and out and out[-1].strip() != "":
+                out.append("")
+                issues.append(LintIssue(i + 1, "list-spacing", "Inserted blank line before list"))
+            out.append(line)
+            in_list = True
+            last_list_lineno = i + 1
+            continue
+
+        if in_list and is_continuation(i):
+            out.append(line)
+            continue
+
+        if in_list and out and out[-1].strip() != "":
+            out.append("")
+            issues.append(LintIssue(last_list_lineno, "list-spacing", "Inserted blank line after list"))
+        out.append(line)
+        in_list = False
+
+    return out
+
+
 def ensure_single_trailing_newline(text, issues):
     stripped = text.rstrip("\n")
     if text != stripped + "\n":
@@ -369,6 +459,11 @@ def lint_note(text):
     for i, line in enumerate(lines):
         if mask[i]:
             continue
+        lines[i] = process_blockquote_spacing(line, i + 1, issues)
+
+    for i, line in enumerate(lines):
+        if mask[i]:
+            continue
         new_line, changed = normalize_emphasis(line)
         if changed:
             issues.append(LintIssue(i + 1, "emphasis-marker", "Converted __/_ emphasis to **/*"))
@@ -390,6 +485,12 @@ def lint_note(text):
 
     mask = code_block_mask(lines)
     lines = collapse_consecutive_hrs(lines, mask, issues)
+
+    mask = code_block_mask(lines)
+    lines = ensure_hr_spacing(lines, mask, issues)
+
+    mask = code_block_mask(lines)
+    lines = ensure_list_spacing(lines, mask, issues)
 
     text_out = "\n".join(lines)
     text_out = ensure_single_trailing_newline(text_out, issues)
@@ -430,6 +531,7 @@ This uses __bold__ and _italic_ the wrong way.
 # Duplicate H1 here
 Some "straight quotes" and some “curly quotes” in the same note.
 Check out [[Some Note]] and this broken [[link.
+>Quote missing a space after the marker.
 Tag test: #work and #project management without closing, plus #done#.
 ***
 ---

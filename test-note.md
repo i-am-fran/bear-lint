@@ -18,13 +18,17 @@ Straight double "quotes" and straight single 'quotes' next to curly double “qu
 A working wiki link: [[Bear Lint Test Note]]
 A broken wiki link missing its closing brackets: [[oops
 A mistyped wiki link with an extra bracket: [[[oops]]]
+>A blockquote missing a space after the marker.
 A normal single-word tag: #work
 A correctly closed multi-word tag: #needs review#
 An unclosed multi-word tag attempt: #needs review
 An unnecessarily closed single-word tag: #done#
+- A list with no blank line separating it from the paragraph above.
+- Second item in that same list.
+This paragraph has no blank line separating it from the list above.
 ***
 ___
 - - -
-The three horizontal rules above should all become a plain "---".
+The three horizontal rules above should all become a plain "---" with a blank line above and below.
 
 
