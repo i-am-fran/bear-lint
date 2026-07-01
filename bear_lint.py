@@ -485,7 +485,7 @@ def lint_one(note_id):
         return
 
     try:
-        bearcli("overwrite", note_id, stdin=fixed)
+        bearcli("overwrite", note_id, "--no-update-modified", stdin=fixed)
     except BearcliError as e:
         sys.exit(f"bear_lint: could not write note: {e}")
 
@@ -539,7 +539,7 @@ def lint_all(query=None):
             continue
 
         try:
-            bearcli("overwrite", note_id, stdin=fixed)
+            bearcli("overwrite", note_id, "--no-update-modified", stdin=fixed)
         except BearcliError as e:
             print(f"{title}: could not write ({e})", file=sys.stderr)
             continue
