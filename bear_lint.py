@@ -363,11 +363,12 @@ def lint_note(text):
     return text_out, issues
 
 
-def print_report(issues):
+def print_report(issues, fixed=True):
     if not issues:
         print("No issues found.", file=sys.stderr)
         return
-    print(f"{len(issues)} issue(s) fixed:", file=sys.stderr)
+    label = "issue(s) fixed" if fixed else "issue(s) found (manual attention needed)"
+    print(f"{len(issues)} {label}:", file=sys.stderr)
     for i in issues:
         where = f"L{i.line}" if i.line else "note"
         print(f"  [{where}] {i.rule}: {i.message}", file=sys.stderr)
@@ -443,7 +444,7 @@ def lint_one(title):
             print(f"{title}: no issues.", file=sys.stderr)
         else:
             print(f"{title}:", file=sys.stderr)
-            print_report(issues)
+            print_report(issues, fixed=False)
         return
 
     try:
@@ -497,7 +498,7 @@ def lint_all(query=None):
         if fixed == content:
             if issues:
                 print(f"\n{title}:", file=sys.stderr)
-                print_report(issues)
+                print_report(issues, fixed=False)
             continue
 
         try:
