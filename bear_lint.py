@@ -67,6 +67,27 @@ def code_block_mask(lines):
     return mask
 
 
+def frontmatter_mask(lines):
+    # YAML frontmatter: a "---" on line 1 and a matching closing "---" later.
+    # Everything in between (both delimiters included) is treated like a
+    # fenced code block - no rule should reformat it.
+    mask = [False] * len(lines)
+    if not lines or lines[0].strip() != "---":
+        return mask
+    for i in range(1, len(lines)):
+        if lines[i].strip() == "---":
+            for j in range(i + 1):
+                mask[j] = True
+            return mask
+    return mask
+
+
+def protected_mask(lines):
+    code_mask = code_block_mask(lines)
+    fm_mask = frontmatter_mask(lines)
+    return [c or f for c, f in zip(code_mask, fm_mask)]
+
+
 def protect_inline_code(line):
     spans = []
 
@@ -162,7 +183,7 @@ def process_headings(lines, mask):
     n = len(lines)
     prev_level = 1
 
-    if n > 1 and lines[1].strip() != "":
+    if n > 1 and not mask[1] and lines[1].strip() != "":
         out.append("")
         issues.append(LintIssue(2, "heading-spacing", "Inserted blank line after the title"))
 
@@ -441,7 +462,7 @@ def lint_note(text):
     text = text.replace("\r\n", "\n").replace("\r", "\n")
     lines = text.split("\n")
 
-    mask = code_block_mask(lines)
+    mask = protected_mask(lines)
     lines = strip_trailing_ws(lines, issues)
 
     for i, line in enumerate(lines):
@@ -471,11 +492,11 @@ def lint_note(text):
 
     check_title_heading(lines, issues)
 
-    mask = code_block_mask(lines)
+    mask = protected_mask(lines)
     lines, heading_issues = process_headings(lines, mask)
     issues.extend(heading_issues)
 
-    mask = code_block_mask(lines)
+    mask = protected_mask(lines)
     check_duplicate_h1(lines, mask, issues)
     check_tags(lines, mask, issues)
     check_wiki_links(lines, mask, issues)
@@ -483,13 +504,13 @@ def lint_note(text):
 
     lines = collapse_blank_lines(lines, issues)
 
-    mask = code_block_mask(lines)
+    mask = protected_mask(lines)
     lines = collapse_consecutive_hrs(lines, mask, issues)
 
-    mask = code_block_mask(lines)
+    mask = protected_mask(lines)
     lines = ensure_hr_spacing(lines, mask, issues)
 
-    mask = code_block_mask(lines)
+    mask = protected_mask(lines)
     lines = ensure_list_spacing(lines, mask, issues)
 
     text_out = "\n".join(lines)

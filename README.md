@@ -91,7 +91,7 @@ Writes use bearcli's `--no-update-modified` flag, so fixed notes keep their orig
 
 ## Limitations
 
-- Heuristic-based, not a full Markdown parser. Handles fenced code blocks and inline code spans, but very unusual formatting may confuse a rule or two — especially the tag-format check, which flags likely issues for you to confirm rather than auto-fixing.
+- Heuristic-based, not a full Markdown parser. Handles fenced code blocks, inline code spans, and YAML frontmatter (a `---` on line 1 with a matching closing `---`) as protected regions no rule will reformat, but very unusual formatting may confuse a rule or two — especially the tag-format check, which flags likely issues for you to confirm rather than auto-fixing.
 - A few rules are report-only by design (duplicate/title H1s, tag format, wiki-link problems, quote consistency), because auto-fixing them risks changing the note's actual structure or meaning.
 - Locked/encrypted Bear notes are skipped automatically.
 
