@@ -33,13 +33,13 @@ git clone https://github.com/<your-username>/bear-lint.git
 ## Usage
 
 ```bash
-python3 bear_lint.py "Note Title"        # lint one note by title
+python3 bear_lint.py <note-id>           # lint one note by ID
 python3 bear_lint.py --all               # lint all notes (prompts for confirmation)
 python3 bear_lint.py --all "#tag"        # lint notes matching a Bear search query
 python3 bear_lint.py --selftest          # sanity check, no Bear needed
 ```
 
-Title matching is case-insensitive. Issue reports go to stderr; exit code is 0 on success.
+Get a note's ID from `bearcli list` or `bearcli search "query"`. Output shows `Title (id): N issue(s) fixed`. Issue reports go to stderr; exit code is 0 on success.
 
 ## Try it without touching your notes
 
@@ -54,7 +54,8 @@ This runs all rules against a bundled sample note and prints the fixed text plus
 `test-note.md` in this repo is a single note deliberately built to trigger every rule at once. Import it into Bear (`File → Import → Files/Folders…`, or drag it onto Bear's note list), then run:
 
 ```bash
-python3 bear_lint.py "Bear Lint Test Note"
+bearcli search "Bear Lint Test Note" --fields id,title
+python3 bear_lint.py <note-id>
 ```
 
 Compare what Bear shows afterwards against the table above.

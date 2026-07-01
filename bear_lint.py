@@ -3,7 +3,7 @@
 bear_lint.py - Markdown lint/fix for Bear notes.
 
 USAGE
-  bear_lint.py "Note Title"        # lint one note by title (case-insensitive)
+  bear_lint.py <note-id>           # lint one note by ID
   bear_lint.py --all               # lint all notes (prompts for confirmation)
   bear_lint.py --all "#tag"        # lint notes matching a Bear search query
   bear_lint.py --selftest          # sanity check, no Bear needed
@@ -431,28 +431,30 @@ def bearcli(*args, stdin=None):
 # --- CLI commands ---
 
 
-def lint_one(title):
+def lint_one(note_id):
     try:
-        content = bearcli("cat", "--title", title)
+        title = bearcli("show", note_id, "--fields", "title").strip()
+        content = bearcli("cat", note_id)
     except BearcliError as e:
         sys.exit(f"bear_lint: {e}")
 
     fixed, issues = lint_note(content)
+    label = f"{title} ({note_id})"
 
     if fixed == content:
         if not issues:
-            print(f"{title}: no issues.", file=sys.stderr)
+            print(f"{label}: no issues.", file=sys.stderr)
         else:
-            print(f"{title}:", file=sys.stderr)
+            print(f"{label}:", file=sys.stderr)
             print_report(issues, fixed=False)
         return
 
     try:
-        bearcli("overwrite", "--title", title, stdin=fixed)
+        bearcli("overwrite", note_id, stdin=fixed)
     except BearcliError as e:
         sys.exit(f"bear_lint: could not write note: {e}")
 
-    print(f"{title}:", file=sys.stderr)
+    print(f"{label}:", file=sys.stderr)
     print_report(issues)
 
 
@@ -526,7 +528,7 @@ def main():
         return
 
     if not args:
-        sys.exit("Usage: bear_lint.py <title> | --all [query] | --selftest")
+        sys.exit("Usage: bear_lint.py <note-id> | --all [query] | --selftest")
 
     if args[0] == "--all":
         query = args[1] if len(args) > 1 else None
