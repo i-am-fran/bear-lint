@@ -13,7 +13,7 @@ A small Markdown linter for [Bear](https://bear.app) notes. It checks and fixes 
 | Duplicate H1 | Flags an extra `#` heading further down the note (the title-equivalent line — line 1, or the first line after YAML frontmatter — is exempt), left for you to fix by hand since demoting a heading changes real Markdown semantics |
 | Stub notes | Flags a note that has only its title-equivalent H1 and no content underneath, left for you to fill in or delete |
 | Checklist syntax | Normalises to `- [ ] ` / `- [x] ` |
-| Trailing whitespace | Stripped |
+| Trailing whitespace | Stripped, except exactly two trailing spaces mid-note (a CommonMark hard break `<br>`), which are preserved when followed by another non-blank line |
 | Multiple blank lines | Collapsed to one |
 | Bear tag format | Flags unnecessary `#tag#` wraps on single-word tags |
 | `[[Wiki links]]` | Flags unmatched or empty double brackets, and stray triple+ brackets like `[[[typo]]]` |
@@ -22,7 +22,7 @@ A small Markdown linter for [Bear](https://bear.app) notes. It checks and fixes 
 | Curly quotes | Converted to straight quotes (`"`/`'`) |
 | YAML frontmatter | Blank lines inside a frontmatter block are removed |
 | Blockquote spacing | Adds the missing space after `>`, e.g. `>Text` → `> Text` |
-| List spacing | Adds a blank line separating a list from the paragraph before/after it |
+| List spacing | Adds a blank line separating a list from the paragraph before/after it; covers both bullet/checklist lists and ordered (`1.` / `1)`) lists |
 
 ## Requirements
 

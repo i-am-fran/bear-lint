@@ -36,6 +36,15 @@ LIST_ITEM_RE = re.compile(
     r"(?:\[(?P<box>[ xX])\](?P<gap2>[ \t]*))?"
     r"(?P<text>.*)$"
 )
+# CommonMark ordered list marker: one or more digits followed by "." or ")".
+# Used only by ensure_list_spacing() to recognise numbered lists for blank-line
+# spacing purposes - process_list_checklist() intentionally ignores this, so
+# ordered markers/numbering are never rewritten to "-".
+ORDERED_LIST_ITEM_RE = re.compile(
+    r"^(?P<indent>[ \t]*)(?P<marker>\d+[.)])"
+    r"(?P<gap1>[ \t]*)"
+    r"(?P<text>.*)$"
+)
 QUOTE_MARKER_RE = re.compile(r"^([ \t]{0,3}(?:>[ \t]*)*>)([^ \t\n].*)$")
 BOLD_UNDERSCORE_RE = re.compile(r"__(?!\s)([^_\n]+?)(?<!\s)__")
 ITALIC_UNDERSCORE_RE = re.compile(r"(?<![\w_])_(?!_)([^_\n]+?)(?<!\s)_(?![\w_])")
@@ -149,10 +158,27 @@ def is_hr(line):
 
 
 def strip_trailing_ws(lines, issues):
+    # CommonMark hard break: a line ending in exactly two spaces (no tabs)
+    # forces a <br> within a paragraph, but only when there's a following
+    # non-blank line for it to break before - a hard break at end-of-note or
+    # right before a blank line has nothing to act on, so it's still noise
+    # and gets stripped like any other trailing whitespace. Anything other
+    # than exactly two trailing spaces (0/1/3+, or trailing tabs) is never
+    # meaningful hard-break syntax, so it's always stripped regardless of
+    # what follows - this deliberately does not extend the CommonMark-legal
+    # "2 or more spaces" hard break to 3+, to keep the exception as narrow
+    # and unambiguous as possible.
     out = []
+    n = len(lines)
     for idx, line in enumerate(lines, start=1):
         stripped = line.rstrip(" \t")
         if stripped != line:
+            has_hard_break = line[len(stripped):] == "  " and stripped != ""
+            next_line = lines[idx] if idx < n else None
+            keeps_break = has_hard_break and next_line is not None and next_line.strip() != ""
+            if keeps_break:
+                out.append(stripped + "  ")
+                continue
             issues.append(LintIssue(idx, "trailing-whitespace", "Removed trailing whitespace"))
         out.append(stripped)
     return out
@@ -470,9 +496,12 @@ def ensure_list_spacing(lines, mask, issues):
         if is_hr(line):
             return False
         m = LIST_ITEM_RE.match(line)
-        if not m:
-            return False
-        return m.group("box") is not None or m.group("gap1") != ""
+        if m:
+            return m.group("box") is not None or m.group("gap1") != ""
+        om = ORDERED_LIST_ITEM_RE.match(line)
+        if om:
+            return om.group("gap1") != ""
+        return False
 
     def is_continuation(idx):
         # Indented, non-list text right after a list item is treated as that
@@ -675,7 +704,7 @@ class BearcliError(Exception):
     pass
 
 
-def bearcli(*args, stdin=None):
+def bearcli(*args, stdin=None, timeout=30):
     global _bearcli_path
     if _bearcli_path is None:
         found = shutil.which("bearcli")
@@ -688,12 +717,16 @@ def bearcli(*args, stdin=None):
                 "bear_lint: bearcli not found.\n"
                 "Install Bear 2.8 or later: https://bear.app"
             )
-    result = subprocess.run(
-        [_bearcli_path, *args],
-        input=stdin,
-        capture_output=True,
-        text=True,
-    )
+    try:
+        result = subprocess.run(
+            [_bearcli_path, *args],
+            input=stdin,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+    except subprocess.TimeoutExpired:
+        raise BearcliError(f"bearcli {' '.join(args)!r} timed out after {timeout}s")
     if result.returncode != 0:
         raise BearcliError(result.stderr.strip())
     return result.stdout
@@ -727,11 +760,15 @@ def print_dry_run_diff(content, fixed, label):
 
 
 def lint_one(note_id, sections=None, dry_run=False):
+    title = note_id
     try:
         title = bearcli("show", note_id, "--fields", "title").strip()
         content = bearcli("cat", note_id)
     except BearcliError as e:
-        sys.exit(f"bear_lint: {e}")
+        print(f"{note_id}: skipped ({e})", file=sys.stderr)
+        if sections is not None:
+            sections.append(render_note_section(title, note_id, [], skipped_reason=str(e)))
+        return
 
     fixed, issues = lint_note(content)
     label = f"{title} ({note_id})"

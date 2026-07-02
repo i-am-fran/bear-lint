@@ -6,9 +6,11 @@ No pytest, no external deps - matches bear_lint.py's own dependency-free
 philosophy. Run with: python3 test_bear_lint.py
 """
 
+import subprocess
 import sys
 
-from bear_lint import SAMPLE_NOTE, lint_note
+import bear_lint
+from bear_lint import SAMPLE_NOTE, BearcliError, lint_note, lint_one
 
 FAILURES = []
 
@@ -120,9 +122,35 @@ def test_list_spacing():
     assert "list-spacing" in rules(issues)
 
 
+def test_list_spacing_ordered():
+    fixed, issues = lint_note("# Title\n\nBody\n1. item\nMore\n")
+    assert "Body\n\n1. item\n\nMore" in fixed, fixed
+    assert "list-spacing" in rules(issues)
+
+
 def test_trailing_whitespace():
     fixed, issues = lint_note("# Title\n\nBody   \n")
     assert "Body   " not in fixed, fixed
+    assert "trailing-whitespace" in rules(issues)
+
+
+def test_trailing_whitespace_hard_break_preserved():
+    fixed, issues = lint_note("# Title\n\nLine one  \nLine two\n")
+    assert "Line one  \nLine two" in fixed, fixed
+    assert "trailing-whitespace" not in rules(issues)
+
+
+def test_trailing_whitespace_hard_break_at_end_of_note_stripped():
+    fixed, issues = lint_note("# Title\n\nLast line  \n")
+    assert "Last line  " not in fixed, fixed
+    assert "Last line\n" in fixed, fixed
+    assert "trailing-whitespace" in rules(issues)
+
+
+def test_trailing_whitespace_three_spaces_still_stripped():
+    fixed, issues = lint_note("# Title\n\nLine one   \nLine two\n")
+    assert "Line one   " not in fixed, fixed
+    assert "Line one\nLine two" in fixed, fixed
     assert "trailing-whitespace" in rules(issues)
 
 
@@ -141,12 +169,61 @@ def test_frontmatter_blank_line():
     assert "\n\n" not in frontmatter, repr(frontmatter)
 
 
+def test_bearcli_timeout():
+    def fake_run(*args, **kwargs):
+        raise subprocess.TimeoutExpired(cmd=args[0], timeout=kwargs.get("timeout"))
+
+    orig_run = subprocess.run
+    orig_path = bear_lint._bearcli_path
+    subprocess.run = fake_run
+    bear_lint._bearcli_path = "/usr/bin/true"
+    try:
+        try:
+            bear_lint.bearcli("cat", "some-id")
+            raised = False
+            message = ""
+        except BearcliError as e:
+            raised = True
+            message = str(e)
+        assert raised, "bearcli() did not raise BearcliError on subprocess timeout"
+        assert "timed out" in message.lower(), message
+    finally:
+        subprocess.run = orig_run
+        bear_lint._bearcli_path = orig_path
+
+
+def test_lint_one_skips_locked_note():
+    def fake_bearcli(*args, **kwargs):
+        raise BearcliError("note is locked")
+
+    orig_bearcli = bear_lint.bearcli
+    bear_lint.bearcli = fake_bearcli
+
+    import io
+    from contextlib import redirect_stderr
+
+    buf = io.StringIO()
+    try:
+        with redirect_stderr(buf):
+            lint_one("some-note-id")
+    except SystemExit:
+        raise AssertionError("lint_one() should not sys.exit() on a locked/encrypted note")
+    finally:
+        bear_lint.bearcli = orig_bearcli
+
+    output = buf.getvalue()
+    assert "skipped" in output.lower(), output
+    assert "some-note-id" in output, output
+
+
 IDEMPOTENCY_FIXTURES = [
     SAMPLE_NOTE,
     "# Title\n\n* item one\n\n### Sub\n\n>Quote\n",
     "Not a heading\n\nBody\n",
     "# Title\n",
     "---\ntitle: Test\n\n---\n# Title\n\nBody\n---\nMore\n",
+    "# Title\n\nBody\n1. item\nMore\n",
+    "# Title\n\nLine one  \nLine two\n",
 ]
 
 
