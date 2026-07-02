@@ -10,6 +10,7 @@ USAGE
   bear_lint.py --version|-v               # print version
 """
 
+import argparse
 import difflib
 import json
 import os
@@ -935,9 +936,20 @@ REQUIRES
 """
 
 
+def build_arg_parser():
+    parser = argparse.ArgumentParser(prog="bear-lint", add_help=False)
+    parser.add_argument("-o", "--output", action="store_true")
+    parser.add_argument("-n", "--dry-run", action="store_true")
+    parser.add_argument("-y", "--yes", action="store_true")
+    parser.add_argument("-a", "--all", action="store_true")
+    parser.add_argument("target", nargs="?", default=None)
+    return parser
+
+
 def main():
     args = sys.argv[1:]
 
+    # These short-circuit before any note-id/--all parsing applies.
     if not args or "--help" in args or "-h" in args:
         print(HELP, end="")
         sys.exit(0 if args else 1)
@@ -954,20 +966,24 @@ def main():
         sys.stdout.write(fixed)
         return
 
-    output_note = "-o" in args or "--output" in args
-    dry_run = "-n" in args or "--dry-run" in args
-    yes = "-y" in args or "--yes" in args
-    args = [a for a in args if a not in ("-o", "--output", "-n", "--dry-run", "-y", "--yes")]
-    if not args:
+    parser = build_arg_parser()
+    parsed, unknown = parser.parse_known_args(args)
+    if unknown:
+        sys.exit(f"bear_lint: unrecognised argument(s): {' '.join(unknown)}")
+
+    output_note = parsed.output
+    dry_run = parsed.dry_run
+    yes = parsed.yes
+
+    if not parsed.all and parsed.target is None:
         sys.exit("bear_lint: missing note ID or --all")
 
     sections = [] if output_note else None
 
-    if args[0] in ("--all", "-a"):
-        query = args[1] if len(args) > 1 else None
-        lint_all(query, sections=sections, dry_run=dry_run, yes=yes)
+    if parsed.all:
+        lint_all(parsed.target, sections=sections, dry_run=dry_run, yes=yes)
     else:
-        lint_one(args[0], sections=sections, dry_run=dry_run)
+        lint_one(parsed.target, sections=sections, dry_run=dry_run)
 
     if output_note:
         if sections:

@@ -234,6 +234,129 @@ def test_idempotency():
         assert once == twice, f"lint_note is not idempotent for input:\n{text!r}\n\nfirst pass:\n{once!r}\n\nsecond pass:\n{twice!r}"
 
 
+# --- CLI / argument parsing tests ---
+
+
+def _run_main(argv):
+    """Run bear_lint.main() with sys.argv patched, capturing stdout/stderr and
+    exit behaviour. Returns (exit_code, stdout, stderr). exit_code is None if
+    main() returned normally without calling sys.exit()."""
+    import io
+    from contextlib import redirect_stderr, redirect_stdout
+
+    orig_argv = sys.argv
+    sys.argv = ["bear_lint.py", *argv]
+    out, err = io.StringIO(), io.StringIO()
+    exit_code = None
+    try:
+        with redirect_stdout(out), redirect_stderr(err):
+            try:
+                bear_lint.main()
+            except SystemExit as e:
+                exit_code = e.code
+    finally:
+        sys.argv = orig_argv
+    return exit_code, out.getvalue(), err.getvalue()
+
+
+def test_cli_unknown_flag_errors_clearly():
+    def fake_bearcli(*args, **kwargs):
+        raise AssertionError("bearcli should not be called for an unrecognised flag")
+
+    orig_bearcli = bear_lint.bearcli
+    bear_lint.bearcli = fake_bearcli
+    try:
+        exit_code, out, err = _run_main(["--bogus"])
+    finally:
+        bear_lint.bearcli = orig_bearcli
+
+    assert exit_code not in (None, 0), exit_code
+    assert "unrecognised" in err.lower() or "unrecognised" in str(exit_code).lower(), (err, exit_code)
+
+
+def test_cli_unknown_flag_not_treated_as_note_id():
+    calls = []
+
+    def fake_lint_one(note_id, **kwargs):
+        calls.append(note_id)
+
+    orig_lint_one = bear_lint.lint_one
+    bear_lint.lint_one = fake_lint_one
+    try:
+        _run_main(["--bogus"])
+    finally:
+        bear_lint.lint_one = orig_lint_one
+
+    assert calls == [], f"lint_one() should not have been called, but was with {calls}"
+
+
+def test_cli_all_passes_query_through():
+    captured = {}
+
+    def fake_lint_all(query=None, sections=None, dry_run=False, yes=False):
+        captured["query"] = query
+        captured["dry_run"] = dry_run
+        captured["yes"] = yes
+
+    orig_lint_all = bear_lint.lint_all
+    bear_lint.lint_all = fake_lint_all
+    try:
+        exit_code, out, err = _run_main(["--all", "#work"])
+    finally:
+        bear_lint.lint_all = orig_lint_all
+
+    assert exit_code in (None, 0), (exit_code, err)
+    assert captured.get("query") == "#work", captured
+
+
+def test_cli_flag_before_and_after_positional():
+    calls = []
+
+    def fake_lint_one(note_id, sections=None, dry_run=False):
+        calls.append((note_id, dry_run))
+
+    orig_lint_one = bear_lint.lint_one
+    bear_lint.lint_one = fake_lint_one
+    try:
+        _run_main(["-n", "some-note-id"])
+        _run_main(["some-note-id", "-n"])
+    finally:
+        bear_lint.lint_one = orig_lint_one
+
+    assert calls == [("some-note-id", True), ("some-note-id", True)], calls
+
+
+def test_cli_help_prints_exact_help_string():
+    exit_code, out, err = _run_main(["--help"])
+    assert out == bear_lint.HELP, out
+    assert exit_code == 0, exit_code
+
+    exit_code, out, err = _run_main(["-h"])
+    assert out == bear_lint.HELP, out
+    assert exit_code == 0, exit_code
+
+
+def test_cli_missing_note_id_or_all():
+    exit_code, out, err = _run_main([])
+    # No args at all prints HELP to stdout and exits non-zero.
+    assert exit_code not in (None, 0), exit_code
+    assert out == bear_lint.HELP, out
+
+
+def test_cli_missing_note_id_or_all_with_only_flags():
+    def fake_bearcli(*args, **kwargs):
+        raise AssertionError("bearcli should not be called when no note ID or --all is given")
+
+    orig_bearcli = bear_lint.bearcli
+    bear_lint.bearcli = fake_bearcli
+    try:
+        exit_code, out, err = _run_main(["-n"])
+    finally:
+        bear_lint.bearcli = orig_bearcli
+
+    assert exit_code == "bear_lint: missing note ID or --all", exit_code
+
+
 def main():
     tests = [(name, fn) for name, fn in sorted(globals().items()) if name.startswith("test_") and callable(fn)]
     passed = 0

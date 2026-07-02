@@ -67,7 +67,7 @@ bear-lint <note-id> -n           # preview the diff without writing anything bac
 bear-lint --all -n               # preview every note's changes without writing (no prompt)
 ```
 
-Get a note's ID from `bearcli list` or `bearcli search "query"`. Output shows `Title (id): N issue(s) fixed`. Issue reports go to stderr; exit code is 0 on success.
+Get a note's ID from `bearcli list` or `bearcli search "query"`. Output shows `Title (id): N issue(s) fixed`. Issue reports go to stderr; exit code is 0 on success. An unrecognised flag (e.g. a typo like `--al`) is rejected with a clear error instead of silently being treated as a note ID or search query.
 
 Add `-o` / `--output` to also save the report inside Bear: a new note per run, titled `Bear Lint Report — <timestamp>` and tagged `#bear-lint`. The body is Markdown, not a plain-text mirror of stderr: each linted note gets a `[[wikilink]]` heading back to it, issues needing manual attention render as `> [!WARNING]` callouts, stub notes as `> [!TIP]`, and auto-fixed issues as a plain bullet list. No note is created if there's nothing to report (aborted run, or no notes matched the query).
 
