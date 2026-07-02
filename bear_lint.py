@@ -767,7 +767,7 @@ OUTPUT
   See the README for which rules auto-fix vs. report-only.
 
 REQUIRES
-  Bear 2.8+ (provides bearcli at /Applications/Bear.app/Contents/MacOS/bearcli)
+  Bear 2.8+
 """
 
 
