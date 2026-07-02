@@ -105,3 +105,7 @@ Issues and pull requests are welcome.
 ## License
 
 MIT, see [LICENSE](LICENSE).
+
+---
+
+[Check out more of my projects 🚀](https://iamfran.com/tags/projects/)
