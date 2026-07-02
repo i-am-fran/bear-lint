@@ -54,18 +54,24 @@ After either, reload your shell and `bear-lint --help` will work.
 
 ```bash
 bear-lint --help                 # show all commands
+bear-lint --version              # print the installed version
 bear-lint <note-id>              # lint one note by ID
-bear-lint --all                  # lint all notes (prompts for confirmation)
+bear-lint --all                  # lint all notes (always asks for confirmation first)
 bear-lint -a "#tag"              # -a is a short alias for --all
-bear-lint --all "#tag"           # lint notes matching a Bear search query
+bear-lint --all "#tag"           # lint notes matching a Bear search query (also confirms first)
+bear-lint --all "#tag" -y        # skip the confirmation prompt (cron/launchd-friendly)
 bear-lint --selftest             # sanity check, no Bear needed
 bear-lint <note-id> -o           # lint one note and also save the report as a Bear note
 bear-lint --all "#tag" -o        # same, for a batch run
+bear-lint <note-id> -n           # preview the diff without writing anything back
+bear-lint --all -n               # preview every note's changes without writing (no prompt)
 ```
 
 Get a note's ID from `bearcli list` or `bearcli search "query"`. Output shows `Title (id): N issue(s) fixed`. Issue reports go to stderr; exit code is 0 on success.
 
 Add `-o` / `--output` to also save the report inside Bear: a new note per run, titled `Bear Lint Report — <timestamp>` and tagged `#bear-lint`. The body is Markdown, not a plain-text mirror of stderr: each linted note gets a `[[wikilink]]` heading back to it, issues needing manual attention render as `> [!WARNING]` callouts, stub notes as `> [!TIP]`, and auto-fixed issues as a plain bullet list. No note is created if there's nothing to report (aborted run, or no notes matched the query).
+
+Add `-n` / `--dry-run` to preview what would change — a unified diff per note — without calling back to Bear at all. Since nothing destructive happens, `--dry-run` also skips the `--all` confirmation prompt. Add `-y` / `--yes` to skip that same prompt for a real (writing) run, e.g. from cron or launchd.
 
 ## Try it without touching your notes
 
@@ -76,6 +82,12 @@ python3 bear_lint.py --selftest
 This runs all rules against a bundled sample note and prints the fixed text plus a report so you can see exactly what it does.
 
 ## Testing
+
+`test_bear_lint.py` is a plain assert-based test suite (no pytest) covering each rule in isolation plus an idempotency check — running `lint_note()` twice on the same input must produce identical output the second time, which catches autofixes that re-trigger each other. Run it with:
+
+```bash
+python3 test_bear_lint.py
+```
 
 `test-note.md` in this repo is a single note deliberately built to trigger every rule at once. Import it into Bear (`File → Import → Files/Folders…`, or drag it onto Bear's note list), then run:
 

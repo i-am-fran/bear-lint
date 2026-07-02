@@ -3,12 +3,14 @@
 bear_lint.py - Markdown lint/fix for Bear notes.
 
 USAGE
-  bear_lint.py <note-id> [-o]         # lint one note by ID, optionally save a report note
-  bear_lint.py --all|-a [-o]          # lint all notes (prompts for confirmation)
-  bear_lint.py --all|-a "#tag" [-o]   # lint notes matching a Bear search query
-  bear_lint.py --selftest             # sanity check, no Bear needed
+  bear_lint.py <note-id> [-o] [-n]        # lint one note by ID, optionally save a report note / dry-run
+  bear_lint.py --all|-a [-o] [-n] [-y]    # lint all notes (prompts for confirmation unless -y/-n)
+  bear_lint.py --all|-a "#tag" [-o] [-n] [-y]   # lint notes matching a Bear search query
+  bear_lint.py --selftest                 # sanity check, no Bear needed
+  bear_lint.py --version|-v               # print version
 """
 
+import difflib
 import json
 import os
 import re
@@ -17,6 +19,8 @@ import subprocess
 import sys
 from dataclasses import dataclass
 from datetime import datetime
+
+__version__ = "1.3.0"
 
 BEARCLI_FALLBACK = "/Applications/Bear.app/Contents/MacOS/bearcli"
 
@@ -617,14 +621,17 @@ def render_issue_list_item(issue):
     return f"- `[{where}]` {issue.message}"
 
 
-def render_note_section(title, note_id, issues, fixed=None, skipped_reason=None):
+def render_note_section(title, note_id, issues, fixed=None, skipped_reason=None, dry_run=False):
     heading = f"## [[{title}]] ({note_id})"
     if skipped_reason:
         return f"{heading}\n\nSkipped ({skipped_reason})."
     if not issues:
         return f"{heading}\n\nNo issues found."
 
-    label = "issue(s) fixed" if fixed else "issue(s) found (manual attention needed)"
+    if dry_run:
+        label = "issue(s) would be fixed (dry run)"
+    else:
+        label = "issue(s) fixed" if fixed else "issue(s) found (manual attention needed)"
     callouts = [i for i in issues if callout_for(i.rule)]
     plain = [i for i in issues if not callout_for(i.rule)]
 
@@ -707,7 +714,19 @@ def write_report_note(sections):
 # --- CLI commands ---
 
 
-def lint_one(note_id, sections=None):
+def print_dry_run_diff(content, fixed, label):
+    diff = difflib.unified_diff(
+        content.splitlines(keepends=True),
+        fixed.splitlines(keepends=True),
+        fromfile=f"{label} (before)",
+        tofile=f"{label} (after)",
+    )
+    diff_text = "".join(diff)
+    if diff_text:
+        print(diff_text, file=sys.stderr, end="")
+
+
+def lint_one(note_id, sections=None, dry_run=False):
     try:
         title = bearcli("show", note_id, "--fields", "title").strip()
         content = bearcli("cat", note_id)
@@ -729,6 +748,13 @@ def lint_one(note_id, sections=None):
                 sections.append(render_note_section(title, note_id, issues, fixed=False))
         return
 
+    if dry_run:
+        print(f"{label}: {len(issues)} issue(s) would be fixed (dry run)", file=sys.stderr)
+        print_dry_run_diff(content, fixed, label)
+        if sections is not None:
+            sections.append(render_note_section(title, note_id, issues, dry_run=True))
+        return
+
     try:
         bearcli("overwrite", note_id, "--no-update-modified", stdin=fixed)
     except BearcliError as e:
@@ -740,7 +766,7 @@ def lint_one(note_id, sections=None):
         sections.append(render_note_section(title, note_id, issues, fixed=True))
 
 
-def lint_all(query=None, sections=None):
+def lint_all(query=None, sections=None, dry_run=False, yes=False):
     try:
         if query:
             out = bearcli("search", query, "--format", "json", "--fields", "id,title")
@@ -758,7 +784,7 @@ def lint_all(query=None, sections=None):
         print("No notes found.", file=sys.stderr)
         return
 
-    if not query:
+    if not yes and not dry_run:
         answer = input(f"About to lint {len(notes)} notes — continue? [y/N] ")
         if answer.strip().lower() != "y":
             print("Aborted.", file=sys.stderr)
@@ -789,6 +815,16 @@ def lint_all(query=None, sections=None):
                     sections.append(render_note_section(title, note_id, issues, fixed=False))
             continue
 
+        label = f"{title} ({note_id})"
+
+        if dry_run:
+            print(f"\n{title}: {len(issues)} issue(s) would be fixed (dry run)", file=sys.stderr)
+            print_dry_run_diff(content, fixed, label)
+            if sections is not None:
+                sections.append(render_note_section(title, note_id, issues, dry_run=True))
+            fixed_count += 1
+            continue
+
         try:
             bearcli("overwrite", note_id, "--no-update-modified", stdin=fixed)
         except BearcliError as e:
@@ -801,9 +837,10 @@ def lint_all(query=None, sections=None):
             sections.append(render_note_section(title, note_id, issues, fixed=True))
         fixed_count += 1
 
-    print(f"\n{checked} notes checked, {fixed_count} fixed.", file=sys.stderr)
+    verb = "would be fixed" if dry_run else "fixed"
+    print(f"\n{checked} notes checked, {fixed_count} {verb}.", file=sys.stderr)
     if sections is not None:
-        sections.append(f"---\n\n**{checked} notes checked, {fixed_count} fixed.**")
+        sections.append(f"---\n\n**{checked} notes checked, {fixed_count} {verb}.**")
 
 
 HELP = """\
@@ -812,10 +849,12 @@ bear-lint — Markdown linter and fixer for Bear notes
 USAGE
   bear-lint <note-id> [options]        Lint one note by ID.
   bear-lint --all|-a [query] [options] Lint all notes, or only notes matching
-                                        a Bear search query. Without a query,
-                                        asks for confirmation first.
+                                        a Bear search query. Always asks for
+                                        confirmation first unless -y or -n
+                                        is given.
   bear-lint --selftest                 Run all rules against a built-in
                                         sample note. Doesn't touch Bear.
+  bear-lint --version|-v               Print the installed version.
   bear-lint --help|-h                  Show this message.
 
 OPTIONS
@@ -826,12 +865,20 @@ OPTIONS
                  ("> [!WARNING]" / "> [!TIP]"), and auto-fixed ones as plain
                  bullets. Skipped if there's nothing to report (e.g. the run
                  was aborted or nothing matched the query).
+  -n, --dry-run  Show what would change without writing anything back to
+                 Bear. Prints a unified diff per note instead of overwriting
+                 it. Implies skipping the --all confirmation prompt, since
+                 nothing destructive happens.
+  -y, --yes      Skip the --all confirmation prompt (for cron/launchd or
+                 other non-interactive use).
 
 EXAMPLES
   bear-lint <note-id>          Lint a single note.
+  bear-lint <note-id> -n       ...preview the diff without writing it.
   bear-lint <note-id> -o       ...and save the report as a note.
-  bear-lint --all "#work"      Lint every note tagged #work.
-  bear-lint -a                 Lint every note (asks to confirm first).
+  bear-lint --all "#work"      Lint every note tagged #work (asks to confirm).
+  bear-lint --all "#work" -y   ...same, but skip the confirmation prompt.
+  bear-lint -a -n              Preview every note's changes without writing.
   bear-lint --selftest         Dry-run against the bundled sample note.
 
 GETTING A NOTE ID
@@ -842,6 +889,7 @@ OUTPUT
   Progress and issue reports go to stderr; exit code is 0 on success.
     "N issue(s) fixed"                          auto-fixed, note rewritten
     "N issue(s) found (manual attention needed)" flagged only, note left as-is
+    "N issue(s) would be fixed (dry run)"        auto-fixable, but -n/--dry-run given
 
   See the README for which rules auto-fix vs. report-only.
 
@@ -857,6 +905,10 @@ def main():
         print(HELP, end="")
         sys.exit(0 if args else 1)
 
+    if "--version" in args or "-v" in args:
+        print(f"bear-lint {__version__}")
+        return
+
     if "--selftest" in args:
         fixed, issues = lint_note(SAMPLE_NOTE)
         print("=== bear_lint.py selftest ===", file=sys.stderr)
@@ -866,7 +918,9 @@ def main():
         return
 
     output_note = "-o" in args or "--output" in args
-    args = [a for a in args if a not in ("-o", "--output")]
+    dry_run = "-n" in args or "--dry-run" in args
+    yes = "-y" in args or "--yes" in args
+    args = [a for a in args if a not in ("-o", "--output", "-n", "--dry-run", "-y", "--yes")]
     if not args:
         sys.exit("bear_lint: missing note ID or --all")
 
@@ -874,9 +928,9 @@ def main():
 
     if args[0] in ("--all", "-a"):
         query = args[1] if len(args) > 1 else None
-        lint_all(query, sections=sections)
+        lint_all(query, sections=sections, dry_run=dry_run, yes=yes)
     else:
-        lint_one(args[0], sections=sections)
+        lint_one(args[0], sections=sections, dry_run=dry_run)
 
     if output_note:
         if sections:
