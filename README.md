@@ -8,7 +8,8 @@ A small Markdown linter for [Bear](https://bear.app) notes. It checks and fixes 
 |---|---|
 | Bullet markers | Standardises on `-`, flags `*` / `+` |
 | Bold/italic markers | Standardises on `**bold**` / `*italic*`, flags `__`/`_` |
-| Heading hierarchy | Flags skipped levels, fixes missing blank lines before/after headings |
+| Heading hierarchy | Flags skipped levels between real headings, fixes missing blank lines before/after headings |
+| Missing H1 | Flags when the title-equivalent line (line 1, or the first line after YAML frontmatter) isn't a literal `# ` H1 heading, left for you to fix by hand |
 | Duplicate H1 | Flags an extra `#` heading further down the note (the title-equivalent line — line 1, or the first line after YAML frontmatter — is exempt), left for you to fix by hand since demoting a heading changes real Markdown semantics |
 | Checklist syntax | Normalises to `- [ ] ` / `- [x] ` |
 | Trailing whitespace | Stripped |

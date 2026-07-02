@@ -202,6 +202,19 @@ def normalize_quotes(line):
     return restore_inline_code(new, spans), changed
 
 
+def _title_line_index(lines, mask):
+    if mask and mask[0]:
+        # Frontmatter present: Bear's line-1 "title" is the frontmatter
+        # delimiter itself, so the structural title is really the first
+        # non-blank line after the frontmatter closes - skip blank lines
+        # too, not just masked ones.
+        idx = 0
+        while idx < len(mask) and (mask[idx] or lines[idx].strip() == ""):
+            idx += 1
+        return idx
+    return 0
+
+
 def process_headings(lines, mask):
     issues = []
     if not lines:
@@ -209,7 +222,12 @@ def process_headings(lines, mask):
 
     out = [lines[0]]
     n = len(lines)
-    prev_level = 1
+
+    title_idx = _title_line_index(lines, mask)
+    title_match = None
+    if title_idx < n and not (title_idx < len(mask) and mask[title_idx]):
+        title_match = HEADING_RE.match(lines[title_idx])
+    prev_level = len(title_match.group(1)) if title_match and title_match.group(3).strip() else None
 
     if n > 1 and not mask[1] and lines[1].strip() != "":
         out.append("")
@@ -224,7 +242,7 @@ def process_headings(lines, mask):
             if out and out[-1].strip() != "":
                 out.append("")
                 issues.append(LintIssue(i + 1, "heading-spacing", "Inserted blank line before heading"))
-            if level > prev_level + 1:
+            if prev_level is not None and level > prev_level + 1:
                 issues.append(
                     LintIssue(i + 1, "heading-skip", f"Heading level jumps from H{prev_level} to H{level} (skipped level)")
                 )
@@ -242,16 +260,7 @@ def process_headings(lines, mask):
 
 
 def check_duplicate_h1(lines, mask, issues):
-    if mask and mask[0]:
-        # Frontmatter present: Bear's line-1 "title" is the frontmatter
-        # delimiter itself, so the structural title is really the first
-        # non-blank line after the frontmatter closes - skip blank lines
-        # too, not just masked ones.
-        title_idx = 0
-        while title_idx < len(mask) and (mask[title_idx] or lines[title_idx].strip() == ""):
-            title_idx += 1
-    else:
-        title_idx = 0
+    title_idx = _title_line_index(lines, mask)
     for idx, line in enumerate(lines, start=1):
         if idx - 1 == title_idx:
             continue
@@ -263,10 +272,28 @@ def check_duplicate_h1(lines, mask, issues):
                 LintIssue(
                     idx,
                     "duplicate-h1",
-                    f'Extra "# {m.group(3).strip()}" heading found further down the note. Bear '
-                    "already treats the first line as the title/H1 - consider demoting this to H2.",
+                    f'Extra "# {m.group(3).strip()}" heading found further down the note. '
+                    "The note already has a title line at the top - consider demoting this to H2.",
                 )
             )
+
+
+def check_missing_h1(lines, mask, issues):
+    title_idx = _title_line_index(lines, mask)
+    if title_idx >= len(lines):
+        return
+    if title_idx < len(mask) and mask[title_idx]:
+        return
+    m = HEADING_RE.match(lines[title_idx])
+    if m and len(m.group(1)) == 1 and m.group(3).strip():
+        return
+    issues.append(
+        LintIssue(
+            title_idx + 1,
+            "missing-h1",
+            'Note doesn\'t start with an H1 heading - add "# <title>" as the first line so heading hierarchy starts correctly.',
+        )
+    )
 
 
 def check_tags(lines, mask, issues):
@@ -497,6 +524,7 @@ def lint_note(text):
 
     mask = protected_mask(lines)
     check_duplicate_h1(lines, mask, issues)
+    check_missing_h1(lines, mask, issues)
     check_tags(lines, mask, issues)
     check_wiki_links(lines, mask, issues)
 
@@ -719,8 +747,9 @@ GETTING A NOTE ID
 OUTPUT
   Issue reports go to stderr. Exit code is 0 on success.
   Auto-fixed issues are labelled "issue(s) fixed".
-  Report-only issues (tag format, wiki links, duplicate H1) are labelled
-  "issue(s) found (manual attention needed)" — the note is not modified for these.
+  Report-only issues (tag format, wiki links, duplicate H1, missing H1) are
+  labelled "issue(s) found (manual attention needed)" — the note is not
+  modified for these.
 
   -o, --output   Also save the report as a new Bear note, tagged #bear-lint and
                  titled "Bear Lint Report — <timestamp>". Skipped if there's nothing

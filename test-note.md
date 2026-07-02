@@ -1,4 +1,4 @@
-# Bear Lint Test Note
+Bear Lint Test Note
 ## Section One
 This paragraph has trailing spaces on the end.   
 * Bullet using an asterisk marker
