@@ -48,6 +48,29 @@ class LintIssue:
     message: str
 
 
+_RULE_ACRONYMS = {"h1": "H1", "hr": "HR", "hrs": "HRs"}
+
+
+def humanize_rule(slug):
+    return " ".join(_RULE_ACRONYMS.get(w, w.capitalize()) for w in slug.split("-"))
+
+
+CALLOUT_TYPES = {
+    "missing-h1": "WARNING",
+    "duplicate-h1": "WARNING",
+    "heading-skip": "WARNING",
+    "tag-format": "WARNING",
+    "wiki-link": "WARNING",
+    "stub-note": "TIP",
+}
+
+
+def callout_for(rule):
+    """Callout type for report-only rules, or None for auto-fixed rules
+    (which render as a plain list instead of a callout)."""
+    return CALLOUT_TYPES.get(rule)
+
+
 def code_block_mask(lines):
     mask = [False] * len(lines)
     in_block = False
@@ -296,6 +319,32 @@ def check_missing_h1(lines, mask, issues):
     )
 
 
+def check_stub_note(lines, mask, issues):
+    title_idx = _title_line_index(lines, mask)
+    if title_idx >= len(lines):
+        return
+    if title_idx < len(mask) and mask[title_idx]:
+        return
+    m = HEADING_RE.match(lines[title_idx])
+    if not (m and len(m.group(1)) == 1 and m.group(3).strip()):
+        return  # not a real H1 - that's missing-h1's concern
+
+    for idx in range(title_idx + 1, len(lines)):
+        if idx < len(mask) and mask[idx]:
+            return  # fenced code after the title counts as content
+        if lines[idx].strip() != "":
+            return  # any non-blank line counts as content
+
+    issues.append(
+        LintIssue(
+            title_idx + 1,
+            "stub-note",
+            "Note has only its title with nothing underneath - looks like a stub; "
+            "add some body content or delete the note.",
+        )
+    )
+
+
 def check_tags(lines, mask, issues):
     for idx, raw in enumerate(lines, start=1):
         if idx == 1 or (idx - 1 < len(mask) and mask[idx - 1]):
@@ -305,7 +354,7 @@ def check_tags(lines, mask, issues):
         for m in CLOSED_TAG_RE.finditer(protected):
             if " " not in m.group(1) and "\t" not in m.group(1):
                 issues.append(
-                    LintIssue(idx, "tag-format", f'Tag "#{m.group(1)}#" is a single word; the trailing "#" is unnecessary')
+                    LintIssue(idx, "tag-format", f'Tag "`#{m.group(1)}#`" is a single word; the trailing "#" is unnecessary')
                 )
 
 
@@ -324,19 +373,19 @@ def check_wiki_links(lines, mask, issues):
             run = m.group(0)
             if len(run) >= 3:
                 issues.append(
-                    LintIssue(idx, "wiki-link", f'{len(run)} "{run[0]}" in a row - likely a typo in a [[wiki link]]')
+                    LintIssue(idx, "wiki-link", f'{len(run)} "{run[0]}" in a row - likely a typo in a `[[wiki link]]`')
                 )
 
         opens = len(CLEAN_WIKI_OPEN_RE.findall(line))
         closes = len(CLEAN_WIKI_CLOSE_RE.findall(line))
         if opens != closes:
             issues.append(
-                LintIssue(idx, "wiki-link", f"Unmatched [[ ]] on this line - {opens} opening vs {closes} closing")
+                LintIssue(idx, "wiki-link", f"Unmatched `[[ ]]` on this line - {opens} opening vs {closes} closing")
             )
         else:
             for m in CLEAN_WIKILINK_RE.finditer(line):
                 if not m.group(1).strip():
-                    issues.append(LintIssue(idx, "wiki-link", "Empty [[ ]] wiki link"))
+                    issues.append(LintIssue(idx, "wiki-link", "Empty `[[ ]]` wiki link"))
 
 
 def collapse_blank_lines(lines, issues):
@@ -525,6 +574,7 @@ def lint_note(text):
     mask = protected_mask(lines)
     check_duplicate_h1(lines, mask, issues)
     check_missing_h1(lines, mask, issues)
+    check_stub_note(lines, mask, issues)
     check_tags(lines, mask, issues)
     check_wiki_links(lines, mask, issues)
 
@@ -546,20 +596,44 @@ def lint_note(text):
     return text_out, issues
 
 
-def print_report(issues, fixed=True, capture=None):
-    def emit(text):
-        print(text, file=sys.stderr)
-        if capture is not None:
-            capture.append(text)
-
+def print_report(issues, fixed=True):
     if not issues:
-        emit("No issues found.")
+        print("No issues found.", file=sys.stderr)
         return
     label = "issue(s) fixed" if fixed else "issue(s) found (manual attention needed)"
-    emit(f"{len(issues)} {label}:")
+    print(f"{len(issues)} {label}:", file=sys.stderr)
     for i in issues:
         where = f"L{i.line}" if i.line else "note"
-        emit(f"  [{where}] {i.rule}: {i.message}")
+        print(f"  [{where}] {i.rule}: {i.message}", file=sys.stderr)
+
+
+def render_issue_callout(issue):
+    where = f"L{issue.line}" if issue.line else "note"
+    return f"> [!{callout_for(issue.rule)}] {humanize_rule(issue.rule)}\n> `[{where}]` {issue.message}"
+
+
+def render_issue_list_item(issue):
+    where = f"L{issue.line}" if issue.line else "note"
+    return f"- `[{where}]` {issue.message}"
+
+
+def render_note_section(title, note_id, issues, fixed=None, skipped_reason=None):
+    heading = f"## [[{title}]] ({note_id})"
+    if skipped_reason:
+        return f"{heading}\n\nSkipped ({skipped_reason})."
+    if not issues:
+        return f"{heading}\n\nNo issues found."
+
+    label = "issue(s) fixed" if fixed else "issue(s) found (manual attention needed)"
+    callouts = [i for i in issues if callout_for(i.rule)]
+    plain = [i for i in issues if not callout_for(i.rule)]
+
+    parts = [heading, f"**{len(issues)} {label}**"]
+    if callouts:
+        parts.append("\n\n".join(render_issue_callout(i) for i in callouts))
+    if plain:
+        parts.append("\n".join(render_issue_list_item(i) for i in plain))
+    return "\n\n".join(parts)
 
 
 SAMPLE_NOTE = """# My Project Notes
@@ -618,12 +692,10 @@ def bearcli(*args, stdin=None):
     return result.stdout
 
 
-def write_report_note(content):
+def write_report_note(sections):
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M")
     title = f"Bear Lint Report — {timestamp}"
-    # Fenced so stray "#" in issue messages (e.g. quoted heading markers) aren't
-    # parsed as Bear tags, and so headings/emphasis in the transcript stay inert.
-    body = f"```\n{content}```"
+    body = "\n\n".join(sections) + "\n"
     try:
         bearcli("create", title, "--tags", "bear-lint", stdin=body)
     except BearcliError as e:
@@ -635,12 +707,7 @@ def write_report_note(content):
 # --- CLI commands ---
 
 
-def lint_one(note_id, capture=None):
-    def emit(text):
-        print(text, file=sys.stderr)
-        if capture is not None:
-            capture.append(text)
-
+def lint_one(note_id, sections=None):
     try:
         title = bearcli("show", note_id, "--fields", "title").strip()
         content = bearcli("cat", note_id)
@@ -652,10 +719,14 @@ def lint_one(note_id, capture=None):
 
     if fixed == content:
         if not issues:
-            emit(f"{label}: no issues.")
+            print(f"{label}: no issues.", file=sys.stderr)
+            if sections is not None:
+                sections.append(render_note_section(title, note_id, []))
         else:
-            emit(f"{label}:")
-            print_report(issues, fixed=False, capture=capture)
+            print(f"{label}:", file=sys.stderr)
+            print_report(issues, fixed=False)
+            if sections is not None:
+                sections.append(render_note_section(title, note_id, issues, fixed=False))
         return
 
     try:
@@ -663,16 +734,13 @@ def lint_one(note_id, capture=None):
     except BearcliError as e:
         sys.exit(f"bear_lint: could not write note: {e}")
 
-    emit(f"{label}:")
-    print_report(issues, capture=capture)
+    print(f"{label}:", file=sys.stderr)
+    print_report(issues)
+    if sections is not None:
+        sections.append(render_note_section(title, note_id, issues, fixed=True))
 
 
-def lint_all(query=None, capture=None):
-    def emit(text):
-        print(text, file=sys.stderr)
-        if capture is not None:
-            capture.append(text)
-
+def lint_all(query=None, sections=None):
     try:
         if query:
             out = bearcli("search", query, "--format", "json", "--fields", "id,title")
@@ -705,7 +773,9 @@ def lint_all(query=None, capture=None):
         try:
             content = bearcli("cat", note_id)
         except BearcliError as e:
-            emit(f"{title}: skipped ({e})")
+            print(f"{title}: skipped ({e})", file=sys.stderr)
+            if sections is not None:
+                sections.append(render_note_section(title, note_id, [], skipped_reason=str(e)))
             continue
 
         fixed, issues = lint_note(content)
@@ -713,21 +783,27 @@ def lint_all(query=None, capture=None):
 
         if fixed == content:
             if issues:
-                emit(f"\n{title}:")
-                print_report(issues, fixed=False, capture=capture)
+                print(f"\n{title}:", file=sys.stderr)
+                print_report(issues, fixed=False)
+                if sections is not None:
+                    sections.append(render_note_section(title, note_id, issues, fixed=False))
             continue
 
         try:
             bearcli("overwrite", note_id, "--no-update-modified", stdin=fixed)
         except BearcliError as e:
-            emit(f"{title}: could not write ({e})")
+            print(f"{title}: could not write ({e})", file=sys.stderr)
             continue
 
-        emit(f"\n{title}:")
-        print_report(issues, capture=capture)
+        print(f"\n{title}:", file=sys.stderr)
+        print_report(issues)
+        if sections is not None:
+            sections.append(render_note_section(title, note_id, issues, fixed=True))
         fixed_count += 1
 
-    emit(f"\n{checked} notes checked, {fixed_count} fixed.")
+    print(f"\n{checked} notes checked, {fixed_count} fixed.", file=sys.stderr)
+    if sections is not None:
+        sections.append(f"---\n\n**{checked} notes checked, {fixed_count} fixed.**")
 
 
 HELP = """\
@@ -744,9 +820,12 @@ USAGE
 
 OPTIONS
   -o, --output   Also save the report as a new Bear note (tagged #bear-lint,
-                 titled "Bear Lint Report — <timestamp>"). Skipped if there's
-                 nothing to report (e.g. the run was aborted or nothing
-                 matched the query).
+                 titled "Bear Lint Report — <timestamp>"). The note body is
+                 Markdown: each linted note links back via a "[[wikilink]]"
+                 heading, issues render as GitHub-style callouts
+                 ("> [!WARNING]" / "> [!TIP]"), and auto-fixed ones as plain
+                 bullets. Skipped if there's nothing to report (e.g. the run
+                 was aborted or nothing matched the query).
 
 EXAMPLES
   bear-lint <note-id>          Lint a single note.
@@ -791,17 +870,17 @@ def main():
     if not args:
         sys.exit("bear_lint: missing note ID or --all")
 
-    capture = [] if output_note else None
+    sections = [] if output_note else None
 
     if args[0] in ("--all", "-a"):
         query = args[1] if len(args) > 1 else None
-        lint_all(query, capture=capture)
+        lint_all(query, sections=sections)
     else:
-        lint_one(args[0], capture=capture)
+        lint_one(args[0], sections=sections)
 
     if output_note:
-        if capture:
-            write_report_note("\n".join(capture) + "\n")
+        if sections:
+            write_report_note(sections)
         else:
             print("bear_lint: nothing to report — no note created.", file=sys.stderr)
 

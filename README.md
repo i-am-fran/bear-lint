@@ -11,6 +11,7 @@ A small Markdown linter for [Bear](https://bear.app) notes. It checks and fixes 
 | Heading hierarchy | Flags skipped levels between real headings, fixes missing blank lines before/after headings |
 | Missing H1 | Flags when the title-equivalent line (line 1, or the first line after YAML frontmatter) isn't a literal `# ` H1 heading, left for you to fix by hand |
 | Duplicate H1 | Flags an extra `#` heading further down the note (the title-equivalent line — line 1, or the first line after YAML frontmatter — is exempt), left for you to fix by hand since demoting a heading changes real Markdown semantics |
+| Stub notes | Flags a note that has only its title-equivalent H1 and no content underneath, left for you to fill in or delete |
 | Checklist syntax | Normalises to `- [ ] ` / `- [x] ` |
 | Trailing whitespace | Stripped |
 | Multiple blank lines | Collapsed to one |
@@ -64,7 +65,7 @@ bear-lint --all "#tag" -o        # same, for a batch run
 
 Get a note's ID from `bearcli list` or `bearcli search "query"`. Output shows `Title (id): N issue(s) fixed`. Issue reports go to stderr; exit code is 0 on success.
 
-Add `-o` / `--output` to also save the report inside Bear: a new note per run, titled `Bear Lint Report — <timestamp>` and tagged `#bear-lint`, containing the same text as the stderr output. No note is created if there's nothing to report (aborted run, or no notes matched the query).
+Add `-o` / `--output` to also save the report inside Bear: a new note per run, titled `Bear Lint Report — <timestamp>` and tagged `#bear-lint`. The body is Markdown, not a plain-text mirror of stderr: each linted note gets a `[[wikilink]]` heading back to it, issues needing manual attention render as `> [!WARNING]` callouts, stub notes as `> [!TIP]`, and auto-fixed issues as a plain bullet list. No note is created if there's nothing to report (aborted run, or no notes matched the query).
 
 ## Try it without touching your notes
 
@@ -83,7 +84,7 @@ bearcli search "Bear Lint Test Note" --fields id,title
 python3 bear_lint.py <note-id>
 ```
 
-Compare what Bear shows afterwards against the table above.
+Compare what Bear shows afterwards against the table above. (The stub-notes check isn't exercised by this fixture — a note with enough content to trigger every other rule can't also be an empty stub — so test it separately with a note that has only an H1 title and nothing else.)
 
 ## A note on safety
 
@@ -94,7 +95,7 @@ Writes use bearcli's `--no-update-modified` flag, so fixed notes keep their orig
 ## Limitations
 
 - Heuristic-based, not a full Markdown parser. Handles fenced code blocks, inline code spans, and YAML frontmatter (a `---` on line 1 with a matching closing `---`) as protected regions (aside from stripping blank lines inside frontmatter), but very unusual formatting may confuse a rule or two.
-- A few rules are report-only by design (duplicate H1, tag format, wiki-link problems), because auto-fixing them risks changing the note's actual structure or meaning.
+- A few rules are report-only by design (missing/duplicate H1, heading-level skips, stub notes, tag format, wiki-link problems), because auto-fixing them risks changing the note's actual structure or meaning.
 - Locked/encrypted Bear notes are skipped automatically.
 
 ## Contributing
