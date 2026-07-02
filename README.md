@@ -110,6 +110,10 @@ Writes use bearcli's `--no-update-modified` flag, so fixed notes keep their orig
 - A few rules are report-only by design (missing/duplicate H1, heading-level skips, stub notes, tag format, wiki-link problems), because auto-fixing them risks changing the note's actual structure or meaning.
 - Locked/encrypted Bear notes are skipped automatically.
 
+## Changelog
+
+See the [Releases page](https://github.com/i-am-fran/bear-lint/releases) for what changed between versions.
+
 ## Issues
 
 Found a bug or have a feature request? [Open a GitHub issue](https://github.com/i-am-fran/bear-lint/issues) — pull requests aren't accepted, but issue reports are very welcome.
