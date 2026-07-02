@@ -731,29 +731,40 @@ def lint_all(query=None, capture=None):
 
 
 HELP = """\
-bear-lint — Markdown linter for Bear notes
+bear-lint — Markdown linter and fixer for Bear notes
 
 USAGE
-  bear-lint <note-id> [-o]        Lint one note by ID. Output: "Title (id): N issue(s) fixed".
-  bear-lint --all|-a [query] [-o] Lint all notes, or notes matching a Bear search query.
-                                  Without a query, prompts for confirmation first.
-  bear-lint --selftest            Run rules against a built-in sample note. No Bear needed.
-  bear-lint --help                Show this message.
+  bear-lint <note-id> [options]        Lint one note by ID.
+  bear-lint --all|-a [query] [options] Lint all notes, or only notes matching
+                                        a Bear search query. Without a query,
+                                        asks for confirmation first.
+  bear-lint --selftest                 Run all rules against a built-in
+                                        sample note. Doesn't touch Bear.
+  bear-lint --help|-h                  Show this message.
+
+OPTIONS
+  -o, --output   Also save the report as a new Bear note (tagged #bear-lint,
+                 titled "Bear Lint Report — <timestamp>"). Skipped if there's
+                 nothing to report (e.g. the run was aborted or nothing
+                 matched the query).
+
+EXAMPLES
+  bear-lint <note-id>          Lint a single note.
+  bear-lint <note-id> -o       ...and save the report as a note.
+  bear-lint --all "#work"      Lint every note tagged #work.
+  bear-lint -a                 Lint every note (asks to confirm first).
+  bear-lint --selftest         Dry-run against the bundled sample note.
 
 GETTING A NOTE ID
   bearcli list --fields id,title
   bearcli search "my note" --fields id,title
 
 OUTPUT
-  Issue reports go to stderr. Exit code is 0 on success.
-  Auto-fixed issues are labelled "issue(s) fixed".
-  Report-only issues (tag format, wiki links, duplicate H1, missing H1) are
-  labelled "issue(s) found (manual attention needed)" — the note is not
-  modified for these.
+  Progress and issue reports go to stderr; exit code is 0 on success.
+    "N issue(s) fixed"                          auto-fixed, note rewritten
+    "N issue(s) found (manual attention needed)" flagged only, note left as-is
 
-  -o, --output   Also save the report as a new Bear note, tagged #bear-lint and
-                 titled "Bear Lint Report — <timestamp>". Skipped if there's nothing
-                 to report (e.g. the run was aborted or no notes matched).
+  See the README for which rules auto-fix vs. report-only.
 
 REQUIRES
   Bear 2.8+ (provides bearcli at /Applications/Bear.app/Contents/MacOS/bearcli)
