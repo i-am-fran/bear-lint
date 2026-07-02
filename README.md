@@ -32,7 +32,7 @@ A small Markdown linter for [Bear](https://bear.app) notes. It checks and fixes 
 ## Installation
 
 ```bash
-git clone https://github.com/<your-username>/bear-lint.git
+git clone https://github.com/i-am-fran/bear-lint.git
 ```
 
 Then make it runnable as `bear-lint` from anywhere. Pick one:
@@ -98,9 +98,9 @@ Writes use bearcli's `--no-update-modified` flag, so fixed notes keep their orig
 - A few rules are report-only by design (missing/duplicate H1, heading-level skips, stub notes, tag format, wiki-link problems), because auto-fixing them risks changing the note's actual structure or meaning.
 - Locked/encrypted Bear notes are skipped automatically.
 
-## Contributing
+## Issues
 
-Issues and pull requests are welcome.
+Found a bug or have a feature request? [Open a GitHub issue](https://github.com/i-am-fran/bear-lint/issues) — pull requests aren't accepted, but issue reports are very welcome.
 
 ## License
 
