@@ -1,5 +1,7 @@
 # bear-lint
 
+[Project site](https://i-am-fran.github.io/bear-lint/)
+
 A small Markdown linter for [Bear](https://bear.app) notes. It checks and fixes common Markdown inconsistencies — bullet markers, emphasis style, checklist syntax, heading structure, tags, and more — by reading and writing your notes directly via `bearcli`.
 
 ## What it checks
