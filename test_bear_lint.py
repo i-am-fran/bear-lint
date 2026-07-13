@@ -6,6 +6,7 @@ No pytest, no external deps - matches bear_lint.py's own dependency-free
 philosophy. Run with: python3 test_bear_lint.py
 """
 
+import json
 import subprocess
 import sys
 
@@ -96,6 +97,91 @@ def test_tag_format():
 def test_wiki_link():
     fixed, issues = lint_note("# Title\n\nBroken [[link here.\n")
     assert "wiki-link" in rules(issues)
+
+
+def test_extract_wikilink_targets_basic():
+    lines = ["# Title", "See [[Note A]] and [[Note B]]."]
+    mask = bear_lint.protected_mask(lines)
+    targets = bear_lint.extract_wikilink_targets(lines, mask)
+    assert targets == {"Note A", "Note B"}, targets
+
+
+def test_extract_wikilink_targets_skips_masked_lines():
+    lines = ["# Title", "```", "[[Note In Code]]", "```", "[[Note Outside]]"]
+    mask = bear_lint.protected_mask(lines)
+    targets = bear_lint.extract_wikilink_targets(lines, mask)
+    assert targets == {"Note Outside"}, targets
+
+
+def test_extract_wikilink_targets_ignores_empty_link():
+    lines = ["# Title", "See [[ ]] here."]
+    mask = bear_lint.protected_mask(lines)
+    targets = bear_lint.extract_wikilink_targets(lines, mask)
+    assert targets == set(), targets
+
+
+def _titles_by_lower(titles):
+    return {t.lower(): t for t in titles}
+
+
+def test_check_dangling_wikilinks_flags_missing_target():
+    lines = ["# Title", "See [[Missing Note]] and [[Existing Note]]."]
+    mask = bear_lint.protected_mask(lines)
+    titles = {"Existing Note", "Title"}
+    found = []
+    bear_lint.check_dangling_wikilinks(lines, mask, titles, _titles_by_lower(titles), found)
+    assert len(found) == 1, found
+    assert found[0].target == "Missing Note", found[0].target
+    assert not any(t.target == "Existing Note" for t in found), found
+
+
+def test_check_dangling_wikilinks_skips_masked_lines():
+    lines = ["# Title", "```", "[[Missing Note]]", "```"]
+    mask = bear_lint.protected_mask(lines)
+    titles = {"Title"}
+    found = []
+    bear_lint.check_dangling_wikilinks(lines, mask, titles, _titles_by_lower(titles), found)
+    assert found == [], found
+
+
+def test_check_dangling_wikilinks_ignores_empty_link():
+    lines = ["# Title", "See [[ ]] here."]
+    mask = bear_lint.protected_mask(lines)
+    titles = {"Title"}
+    found = []
+    bear_lint.check_dangling_wikilinks(lines, mask, titles, _titles_by_lower(titles), found)
+    assert found == [], found
+
+
+def test_check_dangling_wikilinks_flags_case_mismatch_as_typo():
+    lines = ["# Title", "See [[existing note]] here."]
+    mask = bear_lint.protected_mask(lines)
+    titles = {"Existing Note", "Title"}
+    found = []
+    bear_lint.check_dangling_wikilinks(lines, mask, titles, _titles_by_lower(titles), found)
+    assert len(found) == 1, found
+    assert found[0].target == "existing note", found[0].target
+    assert found[0].suggestion == "Existing Note", found[0].suggestion
+
+
+def test_check_dangling_wikilinks_flags_close_typo():
+    lines = ["# Title", "See [[Existing Notee]] here."]
+    mask = bear_lint.protected_mask(lines)
+    titles = {"Existing Note", "Title"}
+    found = []
+    bear_lint.check_dangling_wikilinks(lines, mask, titles, _titles_by_lower(titles), found)
+    assert len(found) == 1, found
+    assert found[0].suggestion == "Existing Note", found[0].suggestion
+
+
+def test_check_dangling_wikilinks_no_suggestion_for_unrelated_target():
+    lines = ["# Title", "See [[Steve Jobs]] here."]
+    mask = bear_lint.protected_mask(lines)
+    titles = {"Existing Note", "Title"}
+    found = []
+    bear_lint.check_dangling_wikilinks(lines, mask, titles, _titles_by_lower(titles), found)
+    assert len(found) == 1, found
+    assert found[0].suggestion is None, found[0].suggestion
 
 
 def test_blank_lines():
@@ -216,6 +302,379 @@ def test_lint_one_skips_locked_note():
     assert "some-note-id" in output, output
 
 
+def test_lint_one_by_tag_fetches_and_threads_tags():
+    def fake_bearcli(*args, **kwargs):
+        if args[0] == "show":
+            return json.dumps({"title": "My Note", "tags": ["#work"]})
+        if args[0] == "cat":
+            return "# My Note\n\nBody.\n"
+        raise AssertionError(f"unexpected bearcli call: {args}")
+
+    orig_bearcli = bear_lint.bearcli
+    bear_lint.bearcli = fake_bearcli
+    try:
+        sections = []
+        lint_one("some-note-id", sections=sections, by_tag=True)
+    finally:
+        bear_lint.bearcli = orig_bearcli
+
+    assert len(sections) == 1, sections
+    entry = sections[0]
+    assert isinstance(entry, bear_lint.ReportEntry), entry
+    assert entry.heading == "[[My Note]] (some-note-id)", entry
+    assert entry.tags == ["#work"], entry
+
+
+def test_write_report_note_includes_description():
+    captured = {}
+
+    def fake_bearcli(*args, **kwargs):
+        captured["args"] = args
+        captured["stdin"] = kwargs.get("stdin")
+        return ""
+
+    orig_bearcli = bear_lint.bearcli
+    bear_lint.bearcli = fake_bearcli
+    try:
+        bear_lint.write_report_note(
+            ["## [[Note]]\n\nBody"], title_prefix="Bear Lint Report", description="Some description."
+        )
+    finally:
+        bear_lint.bearcli = orig_bearcli
+
+    stdin = captured["stdin"]
+    assert stdin.startswith("Some description.\n\n"), stdin
+    assert "## [[Note]]" in stdin, stdin
+
+
+def test_render_grouped_sections_groups_by_tag_and_untagged():
+    entries = [
+        bear_lint.ReportEntry("[[Note A]] (id-a)", "**1 issue(s) fixed**", ["#work"]),
+        bear_lint.ReportEntry("[[Note B]] (id-b)", "No issues found.", []),
+        bear_lint.ReportEntry("[[Note C]] (id-c)", "No issues found.", ["#home"]),
+    ]
+    rendered = bear_lint.render_grouped_sections(entries)
+
+    assert rendered.index("## `#home`") < rendered.index("## `#work`") < rendered.index("## Untagged"), rendered
+    assert "### [[Note A]] (id-a)\n\n**1 issue(s) fixed**" in rendered, rendered
+    assert "### [[Note B]] (id-b)\n\nNo issues found." in rendered, rendered
+    assert "### [[Note C]] (id-c)\n\nNo issues found." in rendered, rendered
+
+
+def test_render_grouped_sections_shields_tag_headings_from_bear():
+    entries = [bear_lint.ReportEntry("[[Note A]] (id-a)", "Body", ["#work"])]
+    rendered = bear_lint.render_grouped_sections(entries)
+
+    assert "## `#work`" in rendered, rendered
+    assert "## #work" not in rendered, rendered
+
+
+def test_render_grouped_sections_repeats_multi_tag_entries():
+    entries = [bear_lint.ReportEntry("[[Note A]] (id-a)", "Body", ["#home", "#work"])]
+    rendered = bear_lint.render_grouped_sections(entries)
+
+    assert rendered.count("[[Note A]] (id-a)") == 2, rendered
+    assert "## `#home`" in rendered and "## `#work`" in rendered, rendered
+
+
+def test_render_grouped_sections_passes_raw_strings_through():
+    entries = [
+        bear_lint.ReportEntry("[[Note A]] (id-a)", "Body", ["#work"]),
+        "---\n\n**1 notes checked, 1 fixed.**",
+    ]
+    rendered = bear_lint.render_grouped_sections(entries)
+
+    assert rendered.endswith("---\n\n**1 notes checked, 1 fixed.**"), rendered
+
+
+def test_write_report_note_by_tag_groups_sections():
+    captured = {}
+
+    def fake_bearcli(*args, **kwargs):
+        captured["stdin"] = kwargs.get("stdin")
+        return ""
+
+    orig_bearcli = bear_lint.bearcli
+    bear_lint.bearcli = fake_bearcli
+    try:
+        bear_lint.write_report_note(
+            [bear_lint.ReportEntry("[[Note]] (id)", "No issues found.", ["#work"])],
+            title_prefix="Bear Lint Report",
+            description="Some description.",
+            by_tag=True,
+        )
+    finally:
+        bear_lint.bearcli = orig_bearcli
+
+    stdin = captured["stdin"]
+    assert "## `#work`" in stdin, stdin
+    assert "### [[Note]] (id)" in stdin, stdin
+
+
+def test_lint_wiki_reports_dangling_links():
+    notes_json = json.dumps([
+        {"id": "id-1", "title": "Note One"},
+        {"id": "id-2", "title": "Note Two"},
+    ])
+    contents = {
+        "id-1": "# Note One\n\nSee [[Note Two]] and [[Missing Note]].\n",
+        "id-2": "# Note Two\n\nAll good, links to [[Note One]].\n",
+    }
+
+    def fake_bearcli(*args, **kwargs):
+        if args[0] == "list":
+            return notes_json
+        if args[0] == "cat":
+            return contents[args[1]]
+        raise AssertionError(f"unexpected bearcli call: {args}")
+
+    orig_bearcli = bear_lint.bearcli
+    bear_lint.bearcli = fake_bearcli
+
+    import io
+    from contextlib import redirect_stderr
+
+    buf = io.StringIO()
+    sections = []
+    try:
+        with redirect_stderr(buf):
+            bear_lint.lint_wiki(sections=sections)
+    finally:
+        bear_lint.bearcli = orig_bearcli
+
+    output = buf.getvalue()
+    assert "[[Missing Note]]" in output, output
+
+    # Only the note with an actual dangling link gets a section, plus the
+    # trailing summary section - Note Two (no dangling links) is skipped.
+    assert len(sections) == 2, sections
+    assert sections[0] == "## [[Note One]]\n\n- [[Missing Note]]", sections[0]
+    assert "id-1" not in sections[0], sections[0]
+    assert not any("Note Two" in s for s in sections[:-1]), sections
+
+
+def test_lint_wiki_reports_typo_suggestion_separately():
+    notes_json = json.dumps([
+        {"id": "id-1", "title": "Note One"},
+        {"id": "id-2", "title": "Existing Note"},
+    ])
+    contents = {
+        "id-1": "# Note One\n\nSee [[existing note]] and [[Some Unrelated Thing]].\n",
+        "id-2": "# Existing Note\n\nNo links.\n",
+    }
+
+    def fake_bearcli(*args, **kwargs):
+        if args[0] == "list":
+            return notes_json
+        if args[0] == "cat":
+            return contents[args[1]]
+        raise AssertionError(f"unexpected bearcli call: {args}")
+
+    orig_bearcli = bear_lint.bearcli
+    bear_lint.bearcli = fake_bearcli
+
+    import io
+    from contextlib import redirect_stderr
+
+    buf = io.StringIO()
+    sections = []
+    try:
+        with redirect_stderr(buf):
+            bear_lint.lint_wiki(sections=sections)
+    finally:
+        bear_lint.bearcli = orig_bearcli
+
+    output = buf.getvalue()
+    assert "did you mean [[Existing Note]]?" in output, output
+
+    section = sections[0]
+    assert "did you mean [[Existing Note]]?" in section, section
+    assert "- [[Some Unrelated Thing]]" in section, section
+    assert "[[Some Unrelated Thing]] →" not in section, section
+
+
+def test_lint_wiki_skips_bear_lint_tagged_notes():
+    notes_json = json.dumps([
+        {"id": "id-1", "title": "Note One", "tags": []},
+        {"id": "id-2", "title": "Bear Wikilinks Report — 2026-01-01 00:00", "tags": ["#bear-lint"]},
+    ])
+
+    def fake_bearcli(*args, **kwargs):
+        if args[0] == "list":
+            return notes_json
+        if args[0] == "cat":
+            note_id = args[1]
+            if note_id == "id-2":
+                raise AssertionError("lint_wiki should not fetch the body of a #bear-lint tagged note")
+            return "# Note One\n\nSee [[Missing Note]].\n"
+        raise AssertionError(f"unexpected bearcli call: {args}")
+
+    orig_bearcli = bear_lint.bearcli
+    bear_lint.bearcli = fake_bearcli
+
+    import io
+    from contextlib import redirect_stderr
+
+    buf = io.StringIO()
+    sections = []
+    try:
+        with redirect_stderr(buf):
+            bear_lint.lint_wiki(sections=sections)
+    finally:
+        bear_lint.bearcli = orig_bearcli
+
+    output = buf.getvalue()
+    assert "Bear Wikilinks Report" not in output, output
+    assert "1 notes checked, 1 dangling wikilink(s) found in 1 note(s)." in output, output
+
+
+def test_lint_wiki_by_tag_builds_report_entries_with_tags():
+    notes_json = json.dumps([
+        {"id": "id-1", "title": "Note One", "tags": ["#work"]},
+    ])
+
+    def fake_bearcli(*args, **kwargs):
+        if args[0] == "list":
+            return notes_json
+        if args[0] == "cat":
+            return "# Note One\n\nSee [[Missing Note]].\n"
+        raise AssertionError(f"unexpected bearcli call: {args}")
+
+    orig_bearcli = bear_lint.bearcli
+    bear_lint.bearcli = fake_bearcli
+    try:
+        sections = []
+        bear_lint.lint_wiki(sections=sections, by_tag=True)
+    finally:
+        bear_lint.bearcli = orig_bearcli
+
+    entries = [s for s in sections if isinstance(s, bear_lint.ReportEntry)]
+    assert len(entries) == 1, sections
+    assert entries[0].heading == "[[Note One]]", entries[0]
+    assert entries[0].tags == ["#work"], entries[0]
+    assert "Missing Note" in entries[0].body, entries[0]
+
+
+def test_lint_orphans_flags_notes_with_no_incoming_links():
+    notes_json = json.dumps([
+        {"id": "id-1", "title": "Note One"},
+        {"id": "id-2", "title": "Note Two"},
+        {"id": "id-3", "title": "Note Three"},
+    ])
+    contents = {
+        "id-1": "# Note One\n\nSee [[Note Two]].\n",
+        "id-2": "# Note Two\n\nNothing links here but Note One does.\n",
+        "id-3": "# Note Three\n\nNobody links to this one.\n",
+    }
+
+    def fake_bearcli(*args, **kwargs):
+        if args[0] == "list":
+            return notes_json
+        if args[0] == "cat":
+            return contents[args[1]]
+        raise AssertionError(f"unexpected bearcli call: {args}")
+
+    orig_bearcli = bear_lint.bearcli
+    bear_lint.bearcli = fake_bearcli
+
+    import io
+    from contextlib import redirect_stderr
+
+    buf = io.StringIO()
+    sections = []
+    try:
+        with redirect_stderr(buf):
+            bear_lint.lint_orphans(sections=sections)
+    finally:
+        bear_lint.bearcli = orig_bearcli
+
+    output = buf.getvalue()
+    assert "[[Note One]]" in output, output
+    assert "[[Note Three]]" in output, output
+    assert "[[Note Two]]" not in output, output
+
+    assert len(sections) == 2, sections
+    assert sections[0] == "## Orphaned Notes\n\n- [[Note One]]\n- [[Note Three]]", sections[0]
+
+
+def test_lint_orphans_excludes_bear_lint_tagged_notes():
+    notes_json = json.dumps([
+        {"id": "id-1", "title": "Note One", "tags": []},
+        {"id": "id-2", "title": "Bear Orphans Report — 2026-01-01 00:00", "tags": ["#bear-lint"]},
+    ])
+
+    def fake_bearcli(*args, **kwargs):
+        if args[0] == "list":
+            return notes_json
+        if args[0] == "cat":
+            note_id = args[1]
+            if note_id == "id-2":
+                raise AssertionError("lint_orphans should not fetch the body of a #bear-lint tagged note")
+            return "# Note One\n\nNo links to anything.\n"
+        raise AssertionError(f"unexpected bearcli call: {args}")
+
+    orig_bearcli = bear_lint.bearcli
+    bear_lint.bearcli = fake_bearcli
+
+    import io
+    from contextlib import redirect_stderr
+
+    buf = io.StringIO()
+    sections = []
+    try:
+        with redirect_stderr(buf):
+            bear_lint.lint_orphans(sections=sections)
+    finally:
+        bear_lint.bearcli = orig_bearcli
+
+    output = buf.getvalue()
+    assert "Bear Orphans Report" not in output, output
+    assert "[[Note One]]" in output, output
+    assert "1 notes checked, 1 orphan(s) found." in output, output
+
+
+def test_lint_orphans_by_tag_groups_titles_as_flat_lists():
+    # Orphan bodies are all the same boilerplate ("nothing links here"), so
+    # grouped mode renders titles as a plain per-tag bullet list rather than
+    # repeating a heading + boilerplate body for every note.
+    notes_json = json.dumps([
+        {"id": "id-1", "title": "Note One", "tags": ["#home", "#work"]},
+        {"id": "id-2", "title": "Note Two", "tags": []},
+    ])
+    contents = {
+        "id-1": "# Note One\n\nNo links.\n",
+        "id-2": "# Note Two\n\nNo links.\n",
+    }
+
+    def fake_bearcli(*args, **kwargs):
+        if args[0] == "list":
+            return notes_json
+        if args[0] == "cat":
+            return contents[args[1]]
+        raise AssertionError(f"unexpected bearcli call: {args}")
+
+    orig_bearcli = bear_lint.bearcli
+    bear_lint.bearcli = fake_bearcli
+    try:
+        sections = []
+        bear_lint.lint_orphans(sections=sections, by_tag=True)
+    finally:
+        bear_lint.bearcli = orig_bearcli
+
+    assert not any(isinstance(s, bear_lint.ReportEntry) for s in sections), sections
+
+    home_section = next(s for s in sections if s.startswith("## `#home`"))
+    work_section = next(s for s in sections if s.startswith("## `#work`"))
+    untagged_section = next(s for s in sections if s.startswith("## Untagged"))
+
+    assert home_section == "## `#home`\n\n- [[Note One]]", home_section
+    assert work_section == "## `#work`\n\n- [[Note One]]", work_section
+    assert untagged_section == "## Untagged\n\n- [[Note Two]]", untagged_section
+    assert "### " not in "\n".join(sections), sections
+    assert "## #home" not in "\n".join(sections), sections
+    assert "## #work" not in "\n".join(sections), sections
+
+
 IDEMPOTENCY_FIXTURES = [
     SAMPLE_NOTE,
     "# Title\n\n* item one\n\n### Sub\n\n>Quote\n",
@@ -293,7 +752,7 @@ def test_cli_unknown_flag_not_treated_as_note_id():
 def test_cli_all_passes_query_through():
     captured = {}
 
-    def fake_lint_all(query=None, sections=None, dry_run=False, yes=False):
+    def fake_lint_all(query=None, sections=None, dry_run=False, yes=False, by_tag=False):
         captured["query"] = query
         captured["dry_run"] = dry_run
         captured["yes"] = yes
@@ -309,10 +768,247 @@ def test_cli_all_passes_query_through():
     assert captured.get("query") == "#work", captured
 
 
+def test_cli_all_output_flag_uses_default_title_and_description():
+    captured = {}
+
+    def fake_lint_all(query=None, sections=None, dry_run=False, yes=False, by_tag=False):
+        if sections is not None:
+            sections.append("dummy section")
+
+    def fake_write_report_note(sections, title_prefix="Bear Lint Report", description=None, by_tag=False):
+        captured["title_prefix"] = title_prefix
+        captured["description"] = description
+
+    orig_lint_all = bear_lint.lint_all
+    orig_write_report_note = bear_lint.write_report_note
+    bear_lint.lint_all = fake_lint_all
+    bear_lint.write_report_note = fake_write_report_note
+    try:
+        exit_code, out, err = _run_main(["--all", "-o", "-y"])
+    finally:
+        bear_lint.lint_all = orig_lint_all
+        bear_lint.write_report_note = orig_write_report_note
+
+    assert exit_code in (None, 0), (exit_code, err)
+    assert captured.get("title_prefix") == "Bear Lint Report", captured
+    assert captured.get("description") == bear_lint.LINT_REPORT_DESCRIPTION, captured
+
+
+def test_cli_wiki_flag_dispatches():
+    calls = []
+
+    def fake_lint_wiki(sections=None, by_tag=False):
+        calls.append(sections)
+
+    orig_lint_wiki = bear_lint.lint_wiki
+    bear_lint.lint_wiki = fake_lint_wiki
+    try:
+        exit_code, out, err = _run_main(["--wiki"])
+    finally:
+        bear_lint.lint_wiki = orig_lint_wiki
+
+    assert exit_code in (None, 0), (exit_code, err)
+    assert len(calls) == 1, calls
+
+
+def test_cli_wiki_rejects_note_id():
+    def fake_bearcli(*args, **kwargs):
+        raise AssertionError("bearcli should not be called when --wiki is combined with a note ID")
+
+    orig_bearcli = bear_lint.bearcli
+    bear_lint.bearcli = fake_bearcli
+    try:
+        exit_code, out, err = _run_main(["--wiki", "some-note-id"])
+    finally:
+        bear_lint.bearcli = orig_bearcli
+
+    assert exit_code not in (None, 0), exit_code
+    assert "--wiki" in str(exit_code), exit_code
+    assert "note id" in str(exit_code).lower(), exit_code
+
+
+def test_cli_wiki_rejects_all():
+    exit_code, out, err = _run_main(["--wiki", "--all"])
+    assert exit_code not in (None, 0), exit_code
+    assert "--all" in str(exit_code), exit_code
+
+
+def test_cli_wiki_rejects_dry_run():
+    exit_code, out, err = _run_main(["--wiki", "-n"])
+    assert exit_code not in (None, 0), exit_code
+    assert "--dry-run" in str(exit_code), exit_code
+
+
+def test_cli_wiki_rejects_yes():
+    exit_code, out, err = _run_main(["--wiki", "-y"])
+    assert exit_code not in (None, 0), exit_code
+    assert "--yes" in str(exit_code), exit_code
+
+
+def test_cli_wiki_allows_output_flag():
+    captured = {}
+
+    def fake_lint_wiki(sections=None, by_tag=False):
+        captured["sections"] = sections
+        if sections is not None:
+            sections.append("dummy section")
+
+    def fake_write_report_note(sections, title_prefix="Bear Lint Report", description=None, by_tag=False):
+        captured["written"] = sections
+        captured["title_prefix"] = title_prefix
+        captured["description"] = description
+
+    orig_lint_wiki = bear_lint.lint_wiki
+    orig_write_report_note = bear_lint.write_report_note
+    bear_lint.lint_wiki = fake_lint_wiki
+    bear_lint.write_report_note = fake_write_report_note
+    try:
+        exit_code, out, err = _run_main(["--wiki", "-o"])
+    finally:
+        bear_lint.lint_wiki = orig_lint_wiki
+        bear_lint.write_report_note = orig_write_report_note
+
+    assert exit_code in (None, 0), (exit_code, err)
+    assert captured.get("sections") is not None, captured
+    assert captured.get("written") == ["dummy section"], captured
+    assert captured.get("title_prefix") == "Bear Wikilinks Report", captured
+    assert captured.get("description") == bear_lint.WIKI_REPORT_DESCRIPTION, captured
+
+
+def test_cli_orphans_flag_dispatches():
+    calls = []
+
+    def fake_lint_orphans(sections=None, by_tag=False):
+        calls.append(sections)
+
+    orig_lint_orphans = bear_lint.lint_orphans
+    bear_lint.lint_orphans = fake_lint_orphans
+    try:
+        exit_code, out, err = _run_main(["--orphans"])
+    finally:
+        bear_lint.lint_orphans = orig_lint_orphans
+
+    assert exit_code in (None, 0), (exit_code, err)
+    assert len(calls) == 1, calls
+
+
+def test_cli_orphans_rejects_note_id():
+    def fake_bearcli(*args, **kwargs):
+        raise AssertionError("bearcli should not be called when --orphans is combined with a note ID")
+
+    orig_bearcli = bear_lint.bearcli
+    bear_lint.bearcli = fake_bearcli
+    try:
+        exit_code, out, err = _run_main(["--orphans", "some-note-id"])
+    finally:
+        bear_lint.bearcli = orig_bearcli
+
+    assert exit_code not in (None, 0), exit_code
+    assert "--orphans" in str(exit_code), exit_code
+    assert "note id" in str(exit_code).lower(), exit_code
+
+
+def test_cli_orphans_rejects_all():
+    exit_code, out, err = _run_main(["--orphans", "--all"])
+    assert exit_code not in (None, 0), exit_code
+    assert "--all" in str(exit_code), exit_code
+
+
+def test_cli_orphans_rejects_dry_run():
+    exit_code, out, err = _run_main(["--orphans", "-n"])
+    assert exit_code not in (None, 0), exit_code
+    assert "--dry-run" in str(exit_code), exit_code
+
+
+def test_cli_orphans_rejects_yes():
+    exit_code, out, err = _run_main(["--orphans", "-y"])
+    assert exit_code not in (None, 0), exit_code
+    assert "--yes" in str(exit_code), exit_code
+
+
+def test_cli_orphans_rejects_wiki():
+    exit_code, out, err = _run_main(["--orphans", "--wiki"])
+    assert exit_code not in (None, 0), exit_code
+    assert "--wiki" in str(exit_code), exit_code
+    assert "--orphans" in str(exit_code), exit_code
+
+
+def test_cli_orphans_allows_output_flag():
+    captured = {}
+
+    def fake_lint_orphans(sections=None, by_tag=False):
+        captured["sections"] = sections
+        if sections is not None:
+            sections.append("dummy section")
+
+    def fake_write_report_note(sections, title_prefix="Bear Lint Report", description=None, by_tag=False):
+        captured["written"] = sections
+        captured["title_prefix"] = title_prefix
+        captured["description"] = description
+
+    orig_lint_orphans = bear_lint.lint_orphans
+    orig_write_report_note = bear_lint.write_report_note
+    bear_lint.lint_orphans = fake_lint_orphans
+    bear_lint.write_report_note = fake_write_report_note
+    try:
+        exit_code, out, err = _run_main(["--orphans", "-o"])
+    finally:
+        bear_lint.lint_orphans = orig_lint_orphans
+        bear_lint.write_report_note = orig_write_report_note
+
+    assert exit_code in (None, 0), (exit_code, err)
+    assert captured.get("sections") is not None, captured
+    assert captured.get("written") == ["dummy section"], captured
+    assert captured.get("title_prefix") == "Bear Orphans Report", captured
+    assert captured.get("description") == bear_lint.ORPHANS_REPORT_DESCRIPTION, captured
+
+
+def test_cli_by_tag_requires_output():
+    def fake_bearcli(*args, **kwargs):
+        raise AssertionError("bearcli should not be called when --by-tag is rejected before dispatch")
+
+    orig_bearcli = bear_lint.bearcli
+    bear_lint.bearcli = fake_bearcli
+    try:
+        exit_code, out, err = _run_main(["--all", "-t", "-y"])
+    finally:
+        bear_lint.bearcli = orig_bearcli
+
+    assert exit_code not in (None, 0), exit_code
+    assert "--by-tag" in str(exit_code), exit_code
+    assert "--output" in str(exit_code) or "-o" in str(exit_code), exit_code
+
+
+def test_cli_by_tag_threads_through_to_lint_all_and_write_report_note():
+    captured = {}
+
+    def fake_lint_all(query=None, sections=None, dry_run=False, yes=False, by_tag=False):
+        captured["lint_all_by_tag"] = by_tag
+        if sections is not None:
+            sections.append("dummy section")
+
+    def fake_write_report_note(sections, title_prefix="Bear Lint Report", description=None, by_tag=False):
+        captured["write_report_note_by_tag"] = by_tag
+
+    orig_lint_all = bear_lint.lint_all
+    orig_write_report_note = bear_lint.write_report_note
+    bear_lint.lint_all = fake_lint_all
+    bear_lint.write_report_note = fake_write_report_note
+    try:
+        exit_code, out, err = _run_main(["--all", "-o", "-t", "-y"])
+    finally:
+        bear_lint.lint_all = orig_lint_all
+        bear_lint.write_report_note = orig_write_report_note
+
+    assert exit_code in (None, 0), (exit_code, err)
+    assert captured.get("lint_all_by_tag") is True, captured
+    assert captured.get("write_report_note_by_tag") is True, captured
+
+
 def test_cli_flag_before_and_after_positional():
     calls = []
 
-    def fake_lint_one(note_id, sections=None, dry_run=False):
+    def fake_lint_one(note_id, sections=None, dry_run=False, by_tag=False):
         calls.append((note_id, dry_run))
 
     orig_lint_one = bear_lint.lint_one

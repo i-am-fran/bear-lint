@@ -6,6 +6,9 @@ USAGE
   bear_lint.py <note-id> [-o] [-n]        # lint one note by ID, optionally save a report note / dry-run
   bear_lint.py --all|-a [-o] [-n] [-y]    # lint all notes (prompts for confirmation unless -y/-n)
   bear_lint.py --all|-a "#tag" [-o] [-n] [-y]   # lint notes matching a Bear search query
+  bear_lint.py --wiki|-w [-o]             # vault-wide: report dangling [[wikilinks]]
+  bear_lint.py --orphans [-o]             # vault-wide: report notes with no incoming [[wikilinks]]
+  bear_lint.py <note-id>|--all|--wiki|--orphans -o -t   # group the -o report by tag (H2 tag, H3 note title)
   bear_lint.py --selftest                 # sanity check, no Bear needed
   bear_lint.py --version|-v               # print version
 """
@@ -18,10 +21,10 @@ import re
 import shutil
 import subprocess
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 
-__version__ = "1.3.1"
+__version__ = "1.6.0"
 
 BEARCLI_FALLBACK = "/Applications/Bear.app/Contents/MacOS/bearcli"
 
@@ -60,6 +63,25 @@ class LintIssue:
     line: int
     rule: str
     message: str
+
+
+@dataclass
+class WikiTarget:
+    """A dangling [[wikilink]] target, with an optional suggested note title
+    when it looks like a typo/case-mismatch of a real note rather than a
+    link to something that was never meant to be a note."""
+    target: str
+    suggestion: str = None
+
+
+@dataclass
+class ReportEntry:
+    """A single note's contribution to a -o/--output report, kept unrendered
+    (heading separate from body) so -t/--by-tag can regroup entries by tag
+    before deciding what heading level to render them at."""
+    heading: str
+    body: str
+    tags: list = field(default_factory=list)
 
 
 _RULE_ACRONYMS = {"h1": "H1", "hr": "HR", "hrs": "HRs"}
@@ -651,12 +673,11 @@ def render_issue_list_item(issue):
     return f"- `[{where}]` {issue.message}"
 
 
-def render_note_section(title, note_id, issues, fixed=None, skipped_reason=None, dry_run=False):
-    heading = f"## [[{title}]] ({note_id})"
+def render_note_body(issues, fixed=None, skipped_reason=None, dry_run=False):
     if skipped_reason:
-        return f"{heading}\n\nSkipped ({skipped_reason})."
+        return f"Skipped ({skipped_reason})."
     if not issues:
-        return f"{heading}\n\nNo issues found."
+        return "No issues found."
 
     if dry_run:
         label = "issue(s) would be fixed (dry run)"
@@ -665,11 +686,89 @@ def render_note_section(title, note_id, issues, fixed=None, skipped_reason=None,
     callouts = [i for i in issues if callout_for(i.rule)]
     plain = [i for i in issues if not callout_for(i.rule)]
 
-    parts = [heading, f"**{len(issues)} {label}**"]
+    parts = [f"**{len(issues)} {label}**"]
     if callouts:
         parts.append("\n\n".join(render_issue_callout(i) for i in callouts))
     if plain:
         parts.append("\n".join(render_issue_list_item(i) for i in plain))
+    return "\n\n".join(parts)
+
+
+def render_note_section(title, note_id, issues, fixed=None, skipped_reason=None, dry_run=False):
+    heading = f"## [[{title}]] ({note_id})"
+    body = render_note_body(issues, fixed=fixed, skipped_reason=skipped_reason, dry_run=dry_run)
+    return f"{heading}\n\n{body}"
+
+
+def render_wiki_body(targets):
+    typos = [t for t in targets if t.suggestion]
+    plain = [t for t in targets if not t.suggestion]
+    parts = []
+    if typos:
+        parts.append(
+            "\n".join(f"- [[{t.target}]] → possible typo, did you mean [[{t.suggestion}]]?" for t in typos)
+        )
+    if plain:
+        parts.append("\n".join(f"- [[{t.target}]]" for t in plain))
+    return "\n\n".join(parts)
+
+
+def render_wiki_section(title, targets):
+    heading = f"## [[{title}]]"
+    return f"{heading}\n\n{render_wiki_body(targets)}"
+
+
+def render_orphans_section(titles):
+    heading = "## Orphaned Notes"
+    body = "\n".join(f"- [[{t}]]" for t in titles)
+    return f"{heading}\n\n{body}"
+
+
+def _note_report_item(title, note_id, issues, tags, by_tag, fixed=None, skipped_reason=None, dry_run=False):
+    if by_tag:
+        body = render_note_body(issues, fixed=fixed, skipped_reason=skipped_reason, dry_run=dry_run)
+        return ReportEntry(f"[[{title}]] ({note_id})", body, tags)
+    return render_note_section(title, note_id, issues, fixed=fixed, skipped_reason=skipped_reason, dry_run=dry_run)
+
+
+def _wiki_report_item(title, targets, tags, by_tag):
+    if by_tag:
+        return ReportEntry(f"[[{title}]]", render_wiki_body(targets), tags)
+    return render_wiki_section(title, targets)
+
+
+def shield_heading_tag(tag):
+    """Backtick-wrap a Bear tag so it renders as literal text in a heading
+    instead of being re-parsed by Bear as a real tag on the report note."""
+    return f"`{tag}`"
+
+
+def group_by_tag(items, tags_fn):
+    """Group items by tag, bucketing untagged items under a None key. Returns
+    an ordered list of (tag_or_None, [items]) tuples, tags sorted
+    alphabetically with the untagged bucket last. An item with multiple tags
+    appears once per tag it has."""
+    groups = {}
+    order = []
+    for item in items:
+        for key in (tags_fn(item) or [None]):
+            if key not in groups:
+                groups[key] = []
+                order.append(key)
+            groups[key].append(item)
+    return [(key, groups[key]) for key in sorted(order, key=lambda k: (k is None, (k or "").lower()))]
+
+
+def render_grouped_sections(sections):
+    entries = [s for s in sections if isinstance(s, ReportEntry)]
+    raw = [s for s in sections if not isinstance(s, ReportEntry)]
+
+    parts = []
+    for key, group_entries in group_by_tag(entries, lambda e: e.tags):
+        heading = "Untagged" if key is None else shield_heading_tag(key)
+        body = "\n\n".join(f"### {e.heading}\n\n{e.body}" for e in group_entries)
+        parts.append(f"## {heading}\n\n{body}")
+    parts.extend(raw)
     return "\n\n".join(parts)
 
 
@@ -733,10 +832,16 @@ def bearcli(*args, stdin=None, timeout=30):
     return result.stdout
 
 
-def write_report_note(sections):
+LINT_REPORT_DESCRIPTION = "Per-note lint results — auto-fixed issues and issues left for manual review."
+WIKI_REPORT_DESCRIPTION = "Notes containing `[[wikilinks]]` that don't match any existing note title."
+ORPHANS_REPORT_DESCRIPTION = "Notes that no other note links to via [[wikilinks]]."
+
+
+def write_report_note(sections, title_prefix="Bear Lint Report", description=LINT_REPORT_DESCRIPTION, by_tag=False):
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M")
-    title = f"Bear Lint Report — {timestamp}"
-    body = "\n\n".join(sections) + "\n"
+    title = f"{title_prefix} — {timestamp}"
+    body_content = render_grouped_sections(sections) if by_tag else "\n\n".join(sections)
+    body = f"{description}\n\n{body_content}\n"
     try:
         bearcli("create", title, "--tags", "bear-lint", stdin=body)
     except BearcliError as e:
@@ -760,15 +865,21 @@ def print_dry_run_diff(content, fixed, label):
         print(diff_text, file=sys.stderr, end="")
 
 
-def lint_one(note_id, sections=None, dry_run=False):
+def lint_one(note_id, sections=None, dry_run=False, by_tag=False):
     title = note_id
+    tags = []
     try:
-        title = bearcli("show", note_id, "--fields", "title").strip()
+        if by_tag:
+            info = json.loads(bearcli("show", note_id, "--format", "json", "--fields", "title,tags"))
+            title = info.get("title", note_id)
+            tags = info.get("tags", [])
+        else:
+            title = bearcli("show", note_id, "--fields", "title").strip()
         content = bearcli("cat", note_id)
-    except BearcliError as e:
+    except (BearcliError, json.JSONDecodeError) as e:
         print(f"{note_id}: skipped ({e})", file=sys.stderr)
         if sections is not None:
-            sections.append(render_note_section(title, note_id, [], skipped_reason=str(e)))
+            sections.append(_note_report_item(title, note_id, [], tags, by_tag, skipped_reason=str(e)))
         return
 
     fixed, issues = lint_note(content)
@@ -778,19 +889,19 @@ def lint_one(note_id, sections=None, dry_run=False):
         if not issues:
             print(f"{label}: no issues.", file=sys.stderr)
             if sections is not None:
-                sections.append(render_note_section(title, note_id, []))
+                sections.append(_note_report_item(title, note_id, [], tags, by_tag))
         else:
             print(f"{label}:", file=sys.stderr)
             print_report(issues, fixed=False)
             if sections is not None:
-                sections.append(render_note_section(title, note_id, issues, fixed=False))
+                sections.append(_note_report_item(title, note_id, issues, tags, by_tag, fixed=False))
         return
 
     if dry_run:
         print(f"{label}: {len(issues)} issue(s) would be fixed (dry run)", file=sys.stderr)
         print_dry_run_diff(content, fixed, label)
         if sections is not None:
-            sections.append(render_note_section(title, note_id, issues, dry_run=True))
+            sections.append(_note_report_item(title, note_id, issues, tags, by_tag, dry_run=True))
         return
 
     try:
@@ -801,15 +912,15 @@ def lint_one(note_id, sections=None, dry_run=False):
     print(f"{label}:", file=sys.stderr)
     print_report(issues)
     if sections is not None:
-        sections.append(render_note_section(title, note_id, issues, fixed=True))
+        sections.append(_note_report_item(title, note_id, issues, tags, by_tag, fixed=True))
 
 
-def lint_all(query=None, sections=None, dry_run=False, yes=False):
+def lint_all(query=None, sections=None, dry_run=False, yes=False, by_tag=False):
     try:
         if query:
-            out = bearcli("search", query, "--format", "json", "--fields", "id,title")
+            out = bearcli("search", query, "--format", "json", "--fields", "id,title,tags")
         else:
-            out = bearcli("list", "--format", "json", "--fields", "id,title")
+            out = bearcli("list", "--format", "json", "--fields", "id,title,tags")
     except BearcliError as e:
         sys.exit(f"bear_lint: {e}")
 
@@ -834,12 +945,13 @@ def lint_all(query=None, sections=None, dry_run=False, yes=False):
     for note in notes:
         note_id = note["id"]
         title = note["title"]
+        tags = note.get("tags", [])
         try:
             content = bearcli("cat", note_id)
         except BearcliError as e:
             print(f"{title}: skipped ({e})", file=sys.stderr)
             if sections is not None:
-                sections.append(render_note_section(title, note_id, [], skipped_reason=str(e)))
+                sections.append(_note_report_item(title, note_id, [], tags, by_tag, skipped_reason=str(e)))
             continue
 
         fixed, issues = lint_note(content)
@@ -850,7 +962,7 @@ def lint_all(query=None, sections=None, dry_run=False, yes=False):
                 print(f"\n{title}:", file=sys.stderr)
                 print_report(issues, fixed=False)
                 if sections is not None:
-                    sections.append(render_note_section(title, note_id, issues, fixed=False))
+                    sections.append(_note_report_item(title, note_id, issues, tags, by_tag, fixed=False))
             continue
 
         label = f"{title} ({note_id})"
@@ -859,7 +971,7 @@ def lint_all(query=None, sections=None, dry_run=False, yes=False):
             print(f"\n{title}: {len(issues)} issue(s) would be fixed (dry run)", file=sys.stderr)
             print_dry_run_diff(content, fixed, label)
             if sections is not None:
-                sections.append(render_note_section(title, note_id, issues, dry_run=True))
+                sections.append(_note_report_item(title, note_id, issues, tags, by_tag, dry_run=True))
             fixed_count += 1
             continue
 
@@ -872,13 +984,177 @@ def lint_all(query=None, sections=None, dry_run=False, yes=False):
         print(f"\n{title}:", file=sys.stderr)
         print_report(issues)
         if sections is not None:
-            sections.append(render_note_section(title, note_id, issues, fixed=True))
+            sections.append(_note_report_item(title, note_id, issues, tags, by_tag, fixed=True))
         fixed_count += 1
 
     verb = "would be fixed" if dry_run else "fixed"
     print(f"\n{checked} notes checked, {fixed_count} {verb}.", file=sys.stderr)
     if sections is not None:
         sections.append(f"---\n\n**{checked} notes checked, {fixed_count} {verb}.**")
+
+
+def extract_wikilink_targets(lines, mask):
+    targets = set()
+    for idx, line in enumerate(lines):
+        if idx < len(mask) and mask[idx]:
+            continue
+        for m in CLEAN_WIKILINK_RE.finditer(line):
+            target = m.group(1).strip()
+            if target:
+                targets.add(target)
+    return targets
+
+
+def find_typo_suggestion(target, titles, titles_by_lower):
+    """Best-guess real note title for a dangling wikilink target, or None if
+    it looks like an intentional link to something that was never a note."""
+    exact_case_insensitive = titles_by_lower.get(target.lower())
+    if exact_case_insensitive and exact_case_insensitive != target:
+        return exact_case_insensitive
+    close = difflib.get_close_matches(target, titles, n=1, cutoff=0.85)
+    return close[0] if close else None
+
+
+def check_dangling_wikilinks(lines, mask, titles, titles_by_lower, found):
+    for idx, line in enumerate(lines, start=1):
+        if idx - 1 < len(mask) and mask[idx - 1]:
+            continue
+        for m in CLEAN_WIKILINK_RE.finditer(line):
+            target = m.group(1).strip()
+            if not target or target in titles:
+                continue
+            found.append(WikiTarget(target, find_typo_suggestion(target, titles, titles_by_lower)))
+
+
+def lint_wiki(sections=None, by_tag=False):
+    try:
+        out = bearcli("list", "--format", "json", "--fields", "id,title,tags")
+    except BearcliError as e:
+        sys.exit(f"bear_lint: {e}")
+
+    try:
+        notes = json.loads(out)
+    except json.JSONDecodeError as e:
+        sys.exit(f"bear_lint: could not parse bearcli output: {e}\nRaw output: {out[:200]!r}")
+
+    if not notes:
+        print("No notes found.", file=sys.stderr)
+        return
+
+    titles = {note["title"] for note in notes}
+    titles_by_lower = {t.lower(): t for t in titles}
+
+    checked = 0
+    flagged_notes = 0
+    total_targets = 0
+
+    for note in notes:
+        # bear-lint's own report notes (#bear-lint) contain real, unescaped
+        # [[wikilinks]] to nonexistent notes by design (see render_wiki_section) -
+        # scanning them here would recursively flag each report as dangling.
+        if "#bear-lint" in note.get("tags", []):
+            continue
+
+        note_id = note["id"]
+        title = note["title"]
+        tags = note.get("tags", [])
+        try:
+            content = bearcli("cat", note_id)
+        except BearcliError as e:
+            print(f"{title}: skipped ({e})", file=sys.stderr)
+            continue
+
+        checked += 1
+        content = content.replace("\r\n", "\n").replace("\r", "\n")
+        lines = content.split("\n")
+        mask = protected_mask(lines)
+        found = []
+        check_dangling_wikilinks(lines, mask, titles, titles_by_lower, found)
+
+        if not found:
+            continue
+
+        by_target = {}
+        for wt in found:
+            by_target.setdefault(wt.target, wt.suggestion)
+        targets = [WikiTarget(t, s) for t, s in sorted(by_target.items())]
+        flagged_notes += 1
+        total_targets += len(targets)
+        print(f"\n{title}:", file=sys.stderr)
+        for wt in targets:
+            if wt.suggestion:
+                print(f"  [[{wt.target}]] -> possible typo, did you mean [[{wt.suggestion}]]?", file=sys.stderr)
+            else:
+                print(f"  [[{wt.target}]]", file=sys.stderr)
+        if sections is not None:
+            sections.append(_wiki_report_item(title, targets, tags, by_tag))
+
+    print(
+        f"\n{checked} notes checked, {total_targets} dangling wikilink(s) found in {flagged_notes} note(s).",
+        file=sys.stderr,
+    )
+    if sections is not None:
+        sections.append(
+            f"---\n\n**{checked} notes checked, {total_targets} dangling wikilink(s) found in {flagged_notes} note(s).**"
+        )
+
+
+def lint_orphans(sections=None, by_tag=False):
+    try:
+        out = bearcli("list", "--format", "json", "--fields", "id,title,tags")
+    except BearcliError as e:
+        sys.exit(f"bear_lint: {e}")
+
+    try:
+        notes = json.loads(out)
+    except json.JSONDecodeError as e:
+        sys.exit(f"bear_lint: could not parse bearcli output: {e}\nRaw output: {out[:200]!r}")
+
+    if not notes:
+        print("No notes found.", file=sys.stderr)
+        return
+
+    # bear-lint's own report notes (#bear-lint) are excluded from orphan
+    # candidates too - nothing ever links back to a timestamped report, so
+    # they'd be flagged as an orphan on every single run.
+    candidates = [note for note in notes if "#bear-lint" not in note.get("tags", [])]
+    candidate_titles = {note["title"] for note in candidates}
+
+    linked_titles = set()
+    checked = 0
+
+    for note in candidates:
+        note_id = note["id"]
+        title = note["title"]
+        try:
+            content = bearcli("cat", note_id)
+        except BearcliError as e:
+            print(f"{title}: skipped ({e})", file=sys.stderr)
+            continue
+
+        checked += 1
+        content = content.replace("\r\n", "\n").replace("\r", "\n")
+        lines = content.split("\n")
+        mask = protected_mask(lines)
+        linked_titles.update(extract_wikilink_targets(lines, mask))
+
+    orphans = sorted(candidate_titles - linked_titles)
+
+    print(f"\n{len(orphans)} orphaned note(s) with no incoming wikilinks:", file=sys.stderr)
+    for title in orphans:
+        print(f"  [[{title}]]", file=sys.stderr)
+    print(f"\n{checked} notes checked, {len(orphans)} orphan(s) found.", file=sys.stderr)
+
+    if sections is not None:
+        if by_tag and orphans:
+            title_to_tags = {n["title"]: n.get("tags", []) for n in candidates}
+            for key, titles_in_group in group_by_tag(orphans, lambda t: title_to_tags.get(t, [])):
+                heading = "Untagged" if key is None else shield_heading_tag(key)
+                body = "\n".join(f"- [[{t}]]" for t in titles_in_group)
+                sections.append(f"## {heading}\n\n{body}")
+        elif orphans:
+            sections.append(render_orphans_section(orphans))
+        sections.append(f"---\n\n**{checked} notes checked, {len(orphans)} orphan(s) found.**")
 
 
 HELP = """\
@@ -890,6 +1166,16 @@ USAGE
                                         a Bear search query. Always asks for
                                         confirmation first unless -y or -n
                                         is given.
+  bear-lint --wiki|-w [-o]             Vault-wide: report [[wikilinks]] whose
+                                        target note title doesn't exist.
+                                        Standalone mode - can't be combined
+                                        with a note ID, --all, --dry-run,
+                                        --yes, or --orphans.
+  bear-lint --orphans [-o]             Vault-wide: report notes that no
+                                        other note links to via
+                                        [[wikilinks]]. Standalone mode -
+                                        can't be combined with a note ID,
+                                        --all, --dry-run, --yes, or --wiki.
   bear-lint --selftest                 Run all rules against a built-in
                                         sample note. Doesn't touch Bear.
   bear-lint --version|-v               Print the installed version.
@@ -897,12 +1183,29 @@ USAGE
 
 OPTIONS
   -o, --output   Also save the report as a new Bear note (tagged #bear-lint,
-                 titled "Bear Lint Report — <timestamp>"). The note body is
-                 Markdown: each linted note links back via a "[[wikilink]]"
-                 heading, issues render as GitHub-style callouts
-                 ("> [!WARNING]" / "> [!TIP]"), and auto-fixed ones as plain
-                 bullets. Skipped if there's nothing to report (e.g. the run
-                 was aborted or nothing matched the query).
+                 titled "Bear Lint Report — <timestamp>"). A one-line
+                 description sits below the title, explaining what the note
+                 contains. The body is Markdown: each linted note links back
+                 via a "[[wikilink]]" heading, issues render as GitHub-style
+                 callouts ("> [!WARNING]" / "> [!TIP]"), and auto-fixed ones
+                 as plain bullets. Skipped if there's nothing to report (e.g.
+                 the run was aborted or nothing matched the query). With
+                 --wiki, the note is titled "Bear Wikilinks Report —
+                 <timestamp>" instead, with its own description, and each
+                 section is a plain, clickable list of the dangling
+                 "[[wikilinks]]" found - no callouts, note IDs, or line
+                 numbers. With --orphans, the note is titled "Bear Orphans
+                 Report — <timestamp>" instead, with a single section
+                 listing every orphaned note as a plain, clickable
+                 "[[wikilink]]" bullet.
+  -t, --by-tag   Group the -o report note by Bear tag instead of the default
+                 flat list: each tag gets an H2 heading, each note under it
+                 gets an H3. A note with multiple tags appears once under
+                 each of its tags; untagged notes are grouped under an
+                 "Untagged" H2. Requires -o/--output. Exception: --orphans
+                 reports have no per-note body worth heading, so grouped
+                 orphan output is a plain "- [[wikilink]]" bullet list under
+                 each tag's H2 instead of one H3 per note.
   -n, --dry-run  Show what would change without writing anything back to
                  Bear. Prints a unified diff per note instead of overwriting
                  it. Implies skipping the --all confirmation prompt, since
@@ -917,6 +1220,11 @@ EXAMPLES
   bear-lint --all "#work"      Lint every note tagged #work (asks to confirm).
   bear-lint --all "#work" -y   ...same, but skip the confirmation prompt.
   bear-lint -a -n              Preview every note's changes without writing.
+  bear-lint --wiki             Report [[wikilinks]] with no matching note.
+  bear-lint --wiki -o          ...and save the report as a note.
+  bear-lint --orphans          Report notes with no incoming [[wikilinks]].
+  bear-lint --orphans -o       ...and save the report as a note.
+  bear-lint --all -o -t        Save the report grouped by tag (H2 tag, H3 note).
   bear-lint --selftest         Dry-run against the bundled sample note.
 
 GETTING A NOTE ID
@@ -942,6 +1250,9 @@ def build_arg_parser():
     parser.add_argument("-n", "--dry-run", action="store_true")
     parser.add_argument("-y", "--yes", action="store_true")
     parser.add_argument("-a", "--all", action="store_true")
+    parser.add_argument("-w", "--wiki", action="store_true")
+    parser.add_argument("--orphans", action="store_true")
+    parser.add_argument("-t", "--by-tag", action="store_true")
     parser.add_argument("target", nargs="?", default=None)
     return parser
 
@@ -971,23 +1282,48 @@ def main():
     if unknown:
         sys.exit(f"bear_lint: unrecognised argument(s): {' '.join(unknown)}")
 
+    if parsed.wiki and parsed.orphans:
+        sys.exit("bear_lint: --wiki/-w and --orphans cannot be combined with each other")
+
+    if (parsed.wiki or parsed.orphans) and (parsed.target is not None or parsed.all or parsed.dry_run or parsed.yes):
+        sys.exit("bear_lint: --wiki/-w and --orphans cannot be combined with a note ID, --all, --dry-run, or --yes")
+
+    if parsed.by_tag and not parsed.output:
+        sys.exit("bear_lint: --by-tag/-t requires -o/--output")
+
     output_note = parsed.output
     dry_run = parsed.dry_run
     yes = parsed.yes
+    by_tag = parsed.by_tag
 
-    if not parsed.all and parsed.target is None:
+    if not parsed.wiki and not parsed.orphans and not parsed.all and parsed.target is None:
         sys.exit("bear_lint: missing note ID or --all")
 
     sections = [] if output_note else None
 
-    if parsed.all:
-        lint_all(parsed.target, sections=sections, dry_run=dry_run, yes=yes)
+    if parsed.wiki:
+        lint_wiki(sections=sections, by_tag=by_tag)
+    elif parsed.orphans:
+        lint_orphans(sections=sections, by_tag=by_tag)
+    elif parsed.all:
+        lint_all(parsed.target, sections=sections, dry_run=dry_run, yes=yes, by_tag=by_tag)
     else:
-        lint_one(parsed.target, sections=sections, dry_run=dry_run)
+        lint_one(parsed.target, sections=sections, dry_run=dry_run, by_tag=by_tag)
 
     if output_note:
         if sections:
-            write_report_note(sections)
+            if parsed.wiki:
+                write_report_note(
+                    sections, title_prefix="Bear Wikilinks Report", description=WIKI_REPORT_DESCRIPTION, by_tag=by_tag
+                )
+            elif parsed.orphans:
+                write_report_note(
+                    sections, title_prefix="Bear Orphans Report", description=ORPHANS_REPORT_DESCRIPTION, by_tag=by_tag
+                )
+            else:
+                write_report_note(
+                    sections, title_prefix="Bear Lint Report", description=LINT_REPORT_DESCRIPTION, by_tag=by_tag
+                )
         else:
             print("bear_lint: nothing to report — no note created.", file=sys.stderr)
 
