@@ -694,6 +694,40 @@ def test_lint_wiki_mark_rewrites_dangling_link():
     assert any("Missing Note +" in s for s in sections), sections
 
 
+def test_lint_wiki_mark_skips_reporting_when_write_fails():
+    notes_json = json.dumps([
+        {"id": "id-1", "title": "Note One", "tags": []},
+    ])
+    contents = {"id-1": "# Note One\n\nSee [[Missing Note]].\n"}
+
+    def fake_bearcli(*args, **kwargs):
+        if args[0] == "list":
+            return notes_json
+        if args[0] == "cat":
+            return contents[args[1]]
+        if args[0] == "overwrite":
+            raise BearcliError("boom")
+        raise AssertionError(f"unexpected bearcli call: {args}")
+
+    orig_bearcli = bear_lint.bearcli
+    bear_lint.bearcli = fake_bearcli
+
+    import io
+    from contextlib import redirect_stderr
+
+    buf = io.StringIO()
+    sections = []
+    try:
+        with redirect_stderr(buf):
+            bear_lint.lint_wiki(sections=sections, mark=True, yes=True)
+    finally:
+        bear_lint.bearcli = orig_bearcli
+
+    output = buf.getvalue()
+    assert "could not write" in output, output
+    assert not any("Missing Note +" in s for s in sections), sections
+
+
 def test_lint_wiki_mark_dry_run_does_not_write():
     notes_json = json.dumps([
         {"id": "id-1", "title": "Note One", "tags": []},

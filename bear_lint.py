@@ -1155,7 +1155,7 @@ def lint_wiki(sections=None, by_tag=False, mark=False, dry_run=False, yes=False)
                         bearcli("overwrite", note_id, "--no-update-modified", stdin=new_content)
                     except BearcliError as e:
                         print(f"{title}: could not write ({e})", file=sys.stderr)
-                        content_changed = False
+                        continue
 
         if not found and not content_changed:
             continue
