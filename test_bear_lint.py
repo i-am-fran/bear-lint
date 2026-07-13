@@ -184,6 +184,40 @@ def test_check_dangling_wikilinks_no_suggestion_for_unrelated_target():
     assert found[0].suggestion is None, found[0].suggestion
 
 
+def test_wiki_logical_target_strips_marker_when_dangling():
+    titles = {"Existing Note"}
+    assert bear_lint._wiki_logical_target("Missing Note +", titles) == "Missing Note"
+
+
+def test_wiki_logical_target_keeps_raw_when_real_title_ends_in_marker():
+    titles = {"Target +"}
+    assert bear_lint._wiki_logical_target("Target +", titles) == "Target +"
+
+
+def test_wiki_logical_target_returns_raw_when_no_marker():
+    titles = {"Existing Note"}
+    assert bear_lint._wiki_logical_target("Missing Note", titles) == "Missing Note"
+
+
+def test_check_dangling_wikilinks_resolves_already_marked_target():
+    lines = ["# Title", "See [[Missing Note +]] here."]
+    mask = bear_lint.protected_mask(lines)
+    titles = {"Title"}
+    found = []
+    bear_lint.check_dangling_wikilinks(lines, mask, titles, _titles_by_lower(titles), found)
+    assert len(found) == 1, found
+    assert found[0].target == "Missing Note", found[0].target
+
+
+def test_check_dangling_wikilinks_unmarks_when_target_now_exists():
+    lines = ["# Title", "See [[Missing Note +]] here."]
+    mask = bear_lint.protected_mask(lines)
+    titles = {"Title", "Missing Note"}
+    found = []
+    bear_lint.check_dangling_wikilinks(lines, mask, titles, _titles_by_lower(titles), found)
+    assert found == [], found
+
+
 def test_blank_lines():
     fixed, issues = lint_note("# Title\n\nBody1\n\n\n\nBody2\n")
     assert "\n\n\n" not in fixed, fixed

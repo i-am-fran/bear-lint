@@ -72,6 +72,7 @@ class WikiTarget:
     link to something that was never meant to be a note."""
     target: str
     suggestion: str = None
+    marked: bool = False
 
 
 @dataclass
@@ -415,6 +416,7 @@ BRACKET_RUN_RE = re.compile(r"\[+|\]+")
 CLEAN_WIKI_OPEN_RE = re.compile(r"(?<!\[)\[\[(?!\[)")
 CLEAN_WIKI_CLOSE_RE = re.compile(r"(?<!\])\]\](?!\])")
 CLEAN_WIKILINK_RE = re.compile(r"(?<!\[)\[\[(?!\[)(.*?)(?<!\])\]\](?!\])")
+MARK_SUFFIX = " +"
 
 
 def check_wiki_links(lines, mask, issues):
@@ -1015,13 +1017,30 @@ def find_typo_suggestion(target, titles, titles_by_lower):
     return close[0] if close else None
 
 
+def _wiki_logical_target(raw_target, titles):
+    """Resolve a raw [[wikilink]] target to the note title it logically
+    refers to, stripping a trailing mark_dangling_wikilinks() marker first -
+    unless the raw text is itself a real title (checked first, so a title
+    that genuinely ends in " +" is never misread as marked)."""
+    if raw_target in titles:
+        return raw_target
+    if raw_target.endswith(MARK_SUFFIX):
+        stripped = raw_target[: -len(MARK_SUFFIX)]
+        if stripped:
+            return stripped
+    return raw_target
+
+
 def check_dangling_wikilinks(lines, mask, titles, titles_by_lower, found):
     for idx, line in enumerate(lines, start=1):
         if idx - 1 < len(mask) and mask[idx - 1]:
             continue
         for m in CLEAN_WIKILINK_RE.finditer(line):
-            target = m.group(1).strip()
-            if not target or target in titles:
+            raw = m.group(1).strip()
+            if not raw:
+                continue
+            target = _wiki_logical_target(raw, titles)
+            if target in titles:
                 continue
             found.append(WikiTarget(target, find_typo_suggestion(target, titles, titles_by_lower)))
 
