@@ -702,7 +702,7 @@ def render_note_section(title, note_id, issues, fixed=None, skipped_reason=None,
     return f"{heading}\n\n{body}"
 
 
-def render_wiki_body(targets):
+def render_wiki_body(targets, unmarked=None):
     typos = [t for t in targets if t.suggestion]
     plain = [t for t in targets if not t.suggestion]
     parts = []
@@ -711,13 +711,15 @@ def render_wiki_body(targets):
             "\n".join(f"- [[{t.target}]] → possible typo, did you mean [[{t.suggestion}]]?" for t in typos)
         )
     if plain:
-        parts.append("\n".join(f"- [[{t.target}]]" for t in plain))
+        parts.append("\n".join(f"- [[{t.target} +]]" if t.marked else f"- [[{t.target}]]" for t in plain))
+    if unmarked:
+        parts.append("\n".join(f"- [[{t}]] — no longer dangling, marker removed" for t in sorted(unmarked)))
     return "\n\n".join(parts)
 
 
-def render_wiki_section(title, targets):
+def render_wiki_section(title, targets, unmarked=None):
     heading = f"## [[{title}]]"
-    return f"{heading}\n\n{render_wiki_body(targets)}"
+    return f"{heading}\n\n{render_wiki_body(targets, unmarked)}"
 
 
 def render_orphans_section(titles):
@@ -733,10 +735,10 @@ def _note_report_item(title, note_id, issues, tags, by_tag, fixed=None, skipped_
     return render_note_section(title, note_id, issues, fixed=fixed, skipped_reason=skipped_reason, dry_run=dry_run)
 
 
-def _wiki_report_item(title, targets, tags, by_tag):
+def _wiki_report_item(title, targets, tags, by_tag, unmarked=None):
     if by_tag:
-        return ReportEntry(f"[[{title}]]", render_wiki_body(targets), tags)
-    return render_wiki_section(title, targets)
+        return ReportEntry(f"[[{title}]]", render_wiki_body(targets, unmarked), tags)
+    return render_wiki_section(title, targets, unmarked)
 
 
 def shield_heading_tag(tag):

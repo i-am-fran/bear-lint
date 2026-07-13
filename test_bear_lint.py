@@ -277,6 +277,23 @@ def test_mark_dangling_wikilinks_ignores_empty_link():
     assert marked == set(), marked
 
 
+def test_render_wiki_body_shows_marker_for_marked_target():
+    targets = [bear_lint.WikiTarget("Missing Note", marked=True)]
+    body = bear_lint.render_wiki_body(targets)
+    assert body == "- [[Missing Note +]]", body
+
+
+def test_render_wiki_body_unmarked_targets_get_own_line():
+    body = bear_lint.render_wiki_body([], unmarked={"Missing Note"})
+    assert body == "- [[Missing Note]] — no longer dangling, marker removed", body
+
+
+def test_render_wiki_body_without_marking_is_unchanged():
+    targets = [bear_lint.WikiTarget("Missing Note")]
+    body = bear_lint.render_wiki_body(targets)
+    assert body == "- [[Missing Note]]", body
+
+
 def test_blank_lines():
     fixed, issues = lint_note("# Title\n\nBody1\n\n\n\nBody2\n")
     assert "\n\n\n" not in fixed, fixed
