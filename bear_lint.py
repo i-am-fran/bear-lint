@@ -24,7 +24,7 @@ import sys
 from dataclasses import dataclass, field
 from datetime import datetime
 
-__version__ = "1.5.0"
+__version__ = "1.6.0"
 
 BEARCLI_FALLBACK = "/Applications/Bear.app/Contents/MacOS/bearcli"
 
@@ -63,6 +63,15 @@ class LintIssue:
     line: int
     rule: str
     message: str
+
+
+@dataclass
+class WikiTarget:
+    """A dangling [[wikilink]] target, with an optional suggested note title
+    when it looks like a typo/case-mismatch of a real note rather than a
+    link to something that was never meant to be a note."""
+    target: str
+    suggestion: str = None
 
 
 @dataclass
@@ -692,7 +701,16 @@ def render_note_section(title, note_id, issues, fixed=None, skipped_reason=None,
 
 
 def render_wiki_body(targets):
-    return "\n".join(f"- [[{t}]]" for t in targets)
+    typos = [t for t in targets if t.suggestion]
+    plain = [t for t in targets if not t.suggestion]
+    parts = []
+    if typos:
+        parts.append(
+            "\n".join(f"- [[{t.target}]] → possible typo, did you mean [[{t.suggestion}]]?" for t in typos)
+        )
+    if plain:
+        parts.append("\n".join(f"- [[{t.target}]]" for t in plain))
+    return "\n\n".join(parts)
 
 
 def render_wiki_section(title, targets):
@@ -719,6 +737,12 @@ def _wiki_report_item(title, targets, tags, by_tag):
     return render_wiki_section(title, targets)
 
 
+def shield_heading_tag(tag):
+    """Backtick-wrap a Bear tag so it renders as literal text in a heading
+    instead of being re-parsed by Bear as a real tag on the report note."""
+    return f"`{tag}`"
+
+
 def group_by_tag(items, tags_fn):
     """Group items by tag, bucketing untagged items under a None key. Returns
     an ordered list of (tag_or_None, [items]) tuples, tags sorted
@@ -741,7 +765,7 @@ def render_grouped_sections(sections):
 
     parts = []
     for key, group_entries in group_by_tag(entries, lambda e: e.tags):
-        heading = "Untagged" if key is None else key
+        heading = "Untagged" if key is None else shield_heading_tag(key)
         body = "\n\n".join(f"### {e.heading}\n\n{e.body}" for e in group_entries)
         parts.append(f"## {heading}\n\n{body}")
     parts.extend(raw)
@@ -981,7 +1005,17 @@ def extract_wikilink_targets(lines, mask):
     return targets
 
 
-def check_dangling_wikilinks(lines, mask, titles, issues):
+def find_typo_suggestion(target, titles, titles_by_lower):
+    """Best-guess real note title for a dangling wikilink target, or None if
+    it looks like an intentional link to something that was never a note."""
+    exact_case_insensitive = titles_by_lower.get(target.lower())
+    if exact_case_insensitive and exact_case_insensitive != target:
+        return exact_case_insensitive
+    close = difflib.get_close_matches(target, titles, n=1, cutoff=0.85)
+    return close[0] if close else None
+
+
+def check_dangling_wikilinks(lines, mask, titles, titles_by_lower, found):
     for idx, line in enumerate(lines, start=1):
         if idx - 1 < len(mask) and mask[idx - 1]:
             continue
@@ -989,7 +1023,7 @@ def check_dangling_wikilinks(lines, mask, titles, issues):
             target = m.group(1).strip()
             if not target or target in titles:
                 continue
-            issues.append(LintIssue(idx, "dangling-wikilink", target))
+            found.append(WikiTarget(target, find_typo_suggestion(target, titles, titles_by_lower)))
 
 
 def lint_wiki(sections=None, by_tag=False):
@@ -1008,6 +1042,7 @@ def lint_wiki(sections=None, by_tag=False):
         return
 
     titles = {note["title"] for note in notes}
+    titles_by_lower = {t.lower(): t for t in titles}
 
     checked = 0
     flagged_notes = 0
@@ -1033,18 +1068,24 @@ def lint_wiki(sections=None, by_tag=False):
         content = content.replace("\r\n", "\n").replace("\r", "\n")
         lines = content.split("\n")
         mask = protected_mask(lines)
-        issues = []
-        check_dangling_wikilinks(lines, mask, titles, issues)
+        found = []
+        check_dangling_wikilinks(lines, mask, titles, titles_by_lower, found)
 
-        if not issues:
+        if not found:
             continue
 
-        targets = sorted({i.message for i in issues})
+        by_target = {}
+        for wt in found:
+            by_target.setdefault(wt.target, wt.suggestion)
+        targets = [WikiTarget(t, s) for t, s in sorted(by_target.items())]
         flagged_notes += 1
         total_targets += len(targets)
         print(f"\n{title}:", file=sys.stderr)
-        for target in targets:
-            print(f"  [[{target}]]", file=sys.stderr)
+        for wt in targets:
+            if wt.suggestion:
+                print(f"  [[{wt.target}]] -> possible typo, did you mean [[{wt.suggestion}]]?", file=sys.stderr)
+            else:
+                print(f"  [[{wt.target}]]", file=sys.stderr)
         if sections is not None:
             sections.append(_wiki_report_item(title, targets, tags, by_tag))
 
@@ -1108,7 +1149,7 @@ def lint_orphans(sections=None, by_tag=False):
         if by_tag and orphans:
             title_to_tags = {n["title"]: n.get("tags", []) for n in candidates}
             for key, titles_in_group in group_by_tag(orphans, lambda t: title_to_tags.get(t, [])):
-                heading = "Untagged" if key is None else key
+                heading = "Untagged" if key is None else shield_heading_tag(key)
                 body = "\n".join(f"- [[{t}]]" for t in titles_in_group)
                 sections.append(f"## {heading}\n\n{body}")
         elif orphans:

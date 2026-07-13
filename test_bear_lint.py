@@ -120,31 +120,68 @@ def test_extract_wikilink_targets_ignores_empty_link():
     assert targets == set(), targets
 
 
+def _titles_by_lower(titles):
+    return {t.lower(): t for t in titles}
+
+
 def test_check_dangling_wikilinks_flags_missing_target():
     lines = ["# Title", "See [[Missing Note]] and [[Existing Note]]."]
     mask = bear_lint.protected_mask(lines)
-    issues = []
-    bear_lint.check_dangling_wikilinks(lines, mask, {"Existing Note", "Title"}, issues)
-    assert len(issues) == 1, issues
-    assert issues[0].rule == "dangling-wikilink"
-    assert issues[0].message == "Missing Note", issues[0].message
-    assert not any(i.message == "Existing Note" for i in issues), issues
+    titles = {"Existing Note", "Title"}
+    found = []
+    bear_lint.check_dangling_wikilinks(lines, mask, titles, _titles_by_lower(titles), found)
+    assert len(found) == 1, found
+    assert found[0].target == "Missing Note", found[0].target
+    assert not any(t.target == "Existing Note" for t in found), found
 
 
 def test_check_dangling_wikilinks_skips_masked_lines():
     lines = ["# Title", "```", "[[Missing Note]]", "```"]
     mask = bear_lint.protected_mask(lines)
-    issues = []
-    bear_lint.check_dangling_wikilinks(lines, mask, {"Title"}, issues)
-    assert issues == [], issues
+    titles = {"Title"}
+    found = []
+    bear_lint.check_dangling_wikilinks(lines, mask, titles, _titles_by_lower(titles), found)
+    assert found == [], found
 
 
 def test_check_dangling_wikilinks_ignores_empty_link():
     lines = ["# Title", "See [[ ]] here."]
     mask = bear_lint.protected_mask(lines)
-    issues = []
-    bear_lint.check_dangling_wikilinks(lines, mask, {"Title"}, issues)
-    assert issues == [], issues
+    titles = {"Title"}
+    found = []
+    bear_lint.check_dangling_wikilinks(lines, mask, titles, _titles_by_lower(titles), found)
+    assert found == [], found
+
+
+def test_check_dangling_wikilinks_flags_case_mismatch_as_typo():
+    lines = ["# Title", "See [[existing note]] here."]
+    mask = bear_lint.protected_mask(lines)
+    titles = {"Existing Note", "Title"}
+    found = []
+    bear_lint.check_dangling_wikilinks(lines, mask, titles, _titles_by_lower(titles), found)
+    assert len(found) == 1, found
+    assert found[0].target == "existing note", found[0].target
+    assert found[0].suggestion == "Existing Note", found[0].suggestion
+
+
+def test_check_dangling_wikilinks_flags_close_typo():
+    lines = ["# Title", "See [[Existing Notee]] here."]
+    mask = bear_lint.protected_mask(lines)
+    titles = {"Existing Note", "Title"}
+    found = []
+    bear_lint.check_dangling_wikilinks(lines, mask, titles, _titles_by_lower(titles), found)
+    assert len(found) == 1, found
+    assert found[0].suggestion == "Existing Note", found[0].suggestion
+
+
+def test_check_dangling_wikilinks_no_suggestion_for_unrelated_target():
+    lines = ["# Title", "See [[Steve Jobs]] here."]
+    mask = bear_lint.protected_mask(lines)
+    titles = {"Existing Note", "Title"}
+    found = []
+    bear_lint.check_dangling_wikilinks(lines, mask, titles, _titles_by_lower(titles), found)
+    assert len(found) == 1, found
+    assert found[0].suggestion is None, found[0].suggestion
 
 
 def test_blank_lines():
@@ -318,10 +355,18 @@ def test_render_grouped_sections_groups_by_tag_and_untagged():
     ]
     rendered = bear_lint.render_grouped_sections(entries)
 
-    assert rendered.index("## #home") < rendered.index("## #work") < rendered.index("## Untagged"), rendered
+    assert rendered.index("## `#home`") < rendered.index("## `#work`") < rendered.index("## Untagged"), rendered
     assert "### [[Note A]] (id-a)\n\n**1 issue(s) fixed**" in rendered, rendered
     assert "### [[Note B]] (id-b)\n\nNo issues found." in rendered, rendered
     assert "### [[Note C]] (id-c)\n\nNo issues found." in rendered, rendered
+
+
+def test_render_grouped_sections_shields_tag_headings_from_bear():
+    entries = [bear_lint.ReportEntry("[[Note A]] (id-a)", "Body", ["#work"])]
+    rendered = bear_lint.render_grouped_sections(entries)
+
+    assert "## `#work`" in rendered, rendered
+    assert "## #work" not in rendered, rendered
 
 
 def test_render_grouped_sections_repeats_multi_tag_entries():
@@ -329,7 +374,7 @@ def test_render_grouped_sections_repeats_multi_tag_entries():
     rendered = bear_lint.render_grouped_sections(entries)
 
     assert rendered.count("[[Note A]] (id-a)") == 2, rendered
-    assert "## #home" in rendered and "## #work" in rendered, rendered
+    assert "## `#home`" in rendered and "## `#work`" in rendered, rendered
 
 
 def test_render_grouped_sections_passes_raw_strings_through():
@@ -362,7 +407,7 @@ def test_write_report_note_by_tag_groups_sections():
         bear_lint.bearcli = orig_bearcli
 
     stdin = captured["stdin"]
-    assert "## #work" in stdin, stdin
+    assert "## `#work`" in stdin, stdin
     assert "### [[Note]] (id)" in stdin, stdin
 
 
@@ -406,6 +451,46 @@ def test_lint_wiki_reports_dangling_links():
     assert sections[0] == "## [[Note One]]\n\n- [[Missing Note]]", sections[0]
     assert "id-1" not in sections[0], sections[0]
     assert not any("Note Two" in s for s in sections[:-1]), sections
+
+
+def test_lint_wiki_reports_typo_suggestion_separately():
+    notes_json = json.dumps([
+        {"id": "id-1", "title": "Note One"},
+        {"id": "id-2", "title": "Existing Note"},
+    ])
+    contents = {
+        "id-1": "# Note One\n\nSee [[existing note]] and [[Some Unrelated Thing]].\n",
+        "id-2": "# Existing Note\n\nNo links.\n",
+    }
+
+    def fake_bearcli(*args, **kwargs):
+        if args[0] == "list":
+            return notes_json
+        if args[0] == "cat":
+            return contents[args[1]]
+        raise AssertionError(f"unexpected bearcli call: {args}")
+
+    orig_bearcli = bear_lint.bearcli
+    bear_lint.bearcli = fake_bearcli
+
+    import io
+    from contextlib import redirect_stderr
+
+    buf = io.StringIO()
+    sections = []
+    try:
+        with redirect_stderr(buf):
+            bear_lint.lint_wiki(sections=sections)
+    finally:
+        bear_lint.bearcli = orig_bearcli
+
+    output = buf.getvalue()
+    assert "did you mean [[Existing Note]]?" in output, output
+
+    section = sections[0]
+    assert "did you mean [[Existing Note]]?" in section, section
+    assert "- [[Some Unrelated Thing]]" in section, section
+    assert "[[Some Unrelated Thing]] →" not in section, section
 
 
 def test_lint_wiki_skips_bear_lint_tagged_notes():
@@ -578,14 +663,16 @@ def test_lint_orphans_by_tag_groups_titles_as_flat_lists():
 
     assert not any(isinstance(s, bear_lint.ReportEntry) for s in sections), sections
 
-    home_section = next(s for s in sections if s.startswith("## #home"))
-    work_section = next(s for s in sections if s.startswith("## #work"))
+    home_section = next(s for s in sections if s.startswith("## `#home`"))
+    work_section = next(s for s in sections if s.startswith("## `#work`"))
     untagged_section = next(s for s in sections if s.startswith("## Untagged"))
 
-    assert home_section == "## #home\n\n- [[Note One]]", home_section
-    assert work_section == "## #work\n\n- [[Note One]]", work_section
+    assert home_section == "## `#home`\n\n- [[Note One]]", home_section
+    assert work_section == "## `#work`\n\n- [[Note One]]", work_section
     assert untagged_section == "## Untagged\n\n- [[Note Two]]", untagged_section
     assert "### " not in "\n".join(sections), sections
+    assert "## #home" not in "\n".join(sections), sections
+    assert "## #work" not in "\n".join(sections), sections
 
 
 IDEMPOTENCY_FIXTURES = [
