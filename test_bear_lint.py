@@ -218,6 +218,65 @@ def test_check_dangling_wikilinks_unmarks_when_target_now_exists():
     assert found == [], found
 
 
+def test_mark_dangling_wikilinks_appends_marker():
+    lines = ["# Title", "See [[Missing Note]] here."]
+    mask = bear_lint.protected_mask(lines)
+    titles = {"Title"}
+    new_lines, marked, unmarked = bear_lint.mark_dangling_wikilinks(lines, mask, titles, _titles_by_lower(titles))
+    assert new_lines[1] == "See [[Missing Note +]] here.", new_lines
+    assert marked == {"Missing Note"}, marked
+    assert unmarked == set(), unmarked
+
+
+def test_mark_dangling_wikilinks_is_idempotent():
+    lines = ["# Title", "See [[Missing Note +]] here."]
+    mask = bear_lint.protected_mask(lines)
+    titles = {"Title"}
+    new_lines, marked, unmarked = bear_lint.mark_dangling_wikilinks(lines, mask, titles, _titles_by_lower(titles))
+    assert new_lines == lines, new_lines
+    assert marked == set(), marked
+    assert unmarked == set(), unmarked
+
+
+def test_mark_dangling_wikilinks_unmarks_when_target_now_exists():
+    lines = ["# Title", "See [[Missing Note +]] here."]
+    mask = bear_lint.protected_mask(lines)
+    titles = {"Title", "Missing Note"}
+    new_lines, marked, unmarked = bear_lint.mark_dangling_wikilinks(lines, mask, titles, _titles_by_lower(titles))
+    assert new_lines[1] == "See [[Missing Note]] here.", new_lines
+    assert unmarked == {"Missing Note"}, unmarked
+    assert marked == set(), marked
+
+
+def test_mark_dangling_wikilinks_leaves_typo_suggestions_unmarked():
+    lines = ["# Title", "See [[existing note]] here."]
+    mask = bear_lint.protected_mask(lines)
+    titles = {"Title", "Existing Note"}
+    new_lines, marked, unmarked = bear_lint.mark_dangling_wikilinks(lines, mask, titles, _titles_by_lower(titles))
+    assert new_lines == lines, new_lines
+    assert marked == set(), marked
+    assert unmarked == set(), unmarked
+
+
+def test_mark_dangling_wikilinks_skips_masked_lines():
+    lines = ["# Title", "```", "[[Missing Note]]", "```"]
+    mask = bear_lint.protected_mask(lines)
+    titles = {"Title"}
+    new_lines, marked, unmarked = bear_lint.mark_dangling_wikilinks(lines, mask, titles, _titles_by_lower(titles))
+    assert new_lines == lines, new_lines
+    assert marked == set(), marked
+    assert unmarked == set(), unmarked
+
+
+def test_mark_dangling_wikilinks_ignores_empty_link():
+    lines = ["# Title", "See [[ ]] here."]
+    mask = bear_lint.protected_mask(lines)
+    titles = {"Title"}
+    new_lines, marked, unmarked = bear_lint.mark_dangling_wikilinks(lines, mask, titles, _titles_by_lower(titles))
+    assert new_lines == lines, new_lines
+    assert marked == set(), marked
+
+
 def test_blank_lines():
     fixed, issues = lint_note("# Title\n\nBody1\n\n\n\nBody2\n")
     assert "\n\n\n" not in fixed, fixed

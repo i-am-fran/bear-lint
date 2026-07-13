@@ -1045,6 +1045,45 @@ def check_dangling_wikilinks(lines, mask, titles, titles_by_lower, found):
             found.append(WikiTarget(target, find_typo_suggestion(target, titles, titles_by_lower)))
 
 
+def mark_dangling_wikilinks(lines, mask, titles, titles_by_lower):
+    """Rewrite dangling [[wikilinks]] with no typo suggestion to append
+    MARK_SUFFIX, and strip that suffix back off once the target note exists
+    or a typo suggestion appears - so re-running is idempotent and
+    self-healing in both directions. Returns (new_lines, marked, unmarked),
+    where marked/unmarked are sets of logical target names changed this
+    call."""
+    new_lines = list(lines)
+    marked = set()
+    unmarked = set()
+
+    for idx, line in enumerate(lines):
+        if idx < len(mask) and mask[idx]:
+            continue
+
+        def repl(m):
+            raw = m.group(1).strip()
+            if not raw:
+                return m.group(0)
+            target = _wiki_logical_target(raw, titles)
+            if target in titles or find_typo_suggestion(target, titles, titles_by_lower):
+                desired = target
+            else:
+                desired = f"{target}{MARK_SUFFIX}"
+            if raw == desired:
+                return m.group(0)
+            if desired.endswith(MARK_SUFFIX):
+                marked.add(target)
+            else:
+                unmarked.add(target)
+            return f"[[{desired}]]"
+
+        new_line = CLEAN_WIKILINK_RE.sub(repl, line)
+        if new_line != line:
+            new_lines[idx] = new_line
+
+    return new_lines, marked, unmarked
+
+
 def lint_wiki(sections=None, by_tag=False):
     try:
         out = bearcli("list", "--format", "json", "--fields", "id,title,tags")
