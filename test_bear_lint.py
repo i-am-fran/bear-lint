@@ -1086,7 +1086,7 @@ def test_cli_all_output_flag_uses_default_title_and_description():
 def test_cli_wiki_flag_dispatches():
     calls = []
 
-    def fake_lint_wiki(sections=None, by_tag=False):
+    def fake_lint_wiki(sections=None, by_tag=False, mark=False, dry_run=False, yes=False):
         calls.append(sections)
 
     orig_lint_wiki = bear_lint.lint_wiki
@@ -1134,10 +1134,54 @@ def test_cli_wiki_rejects_yes():
     assert "--yes" in str(exit_code), exit_code
 
 
+def test_cli_mark_requires_wiki():
+    exit_code, out, err = _run_main(["--mark"])
+    assert exit_code not in (None, 0), exit_code
+    assert "--mark" in str(exit_code), exit_code
+    assert "--wiki" in str(exit_code), exit_code
+
+
+def test_cli_wiki_mark_allows_dry_run_and_yes():
+    captured = {}
+
+    def fake_lint_wiki(sections=None, by_tag=False, mark=False, dry_run=False, yes=False):
+        captured["mark"] = mark
+        captured["dry_run"] = dry_run
+        captured["yes"] = yes
+
+    orig_lint_wiki = bear_lint.lint_wiki
+    bear_lint.lint_wiki = fake_lint_wiki
+    try:
+        exit_code, out, err = _run_main(["--wiki", "--mark", "-n"])
+    finally:
+        bear_lint.lint_wiki = orig_lint_wiki
+
+    assert exit_code in (None, 0), (exit_code, err)
+    assert captured.get("mark") is True, captured
+    assert captured.get("dry_run") is True, captured
+
+
+def test_cli_wiki_mark_dispatches_yes():
+    captured = {}
+
+    def fake_lint_wiki(sections=None, by_tag=False, mark=False, dry_run=False, yes=False):
+        captured["yes"] = yes
+
+    orig_lint_wiki = bear_lint.lint_wiki
+    bear_lint.lint_wiki = fake_lint_wiki
+    try:
+        exit_code, out, err = _run_main(["--wiki", "--mark", "-y"])
+    finally:
+        bear_lint.lint_wiki = orig_lint_wiki
+
+    assert exit_code in (None, 0), (exit_code, err)
+    assert captured.get("yes") is True, captured
+
+
 def test_cli_wiki_allows_output_flag():
     captured = {}
 
-    def fake_lint_wiki(sections=None, by_tag=False):
+    def fake_lint_wiki(sections=None, by_tag=False, mark=False, dry_run=False, yes=False):
         captured["sections"] = sections
         if sections is not None:
             sections.append("dummy section")

@@ -1348,6 +1348,7 @@ def build_arg_parser():
     parser.add_argument("-a", "--all", action="store_true")
     parser.add_argument("-w", "--wiki", action="store_true")
     parser.add_argument("--orphans", action="store_true")
+    parser.add_argument("--mark", action="store_true")
     parser.add_argument("-t", "--by-tag", action="store_true")
     parser.add_argument("target", nargs="?", default=None)
     return parser
@@ -1381,8 +1382,17 @@ def main():
     if parsed.wiki and parsed.orphans:
         sys.exit("bear_lint: --wiki/-w and --orphans cannot be combined with each other")
 
-    if (parsed.wiki or parsed.orphans) and (parsed.target is not None or parsed.all or parsed.dry_run or parsed.yes):
-        sys.exit("bear_lint: --wiki/-w and --orphans cannot be combined with a note ID, --all, --dry-run, or --yes")
+    if parsed.mark and not parsed.wiki:
+        sys.exit("bear_lint: --mark requires --wiki/-w")
+
+    if (parsed.wiki or parsed.orphans) and (parsed.target is not None or parsed.all):
+        sys.exit("bear_lint: --wiki/-w and --orphans cannot be combined with a note ID or --all")
+
+    if parsed.orphans and (parsed.dry_run or parsed.yes):
+        sys.exit("bear_lint: --orphans cannot be combined with --dry-run or --yes")
+
+    if parsed.wiki and not parsed.mark and (parsed.dry_run or parsed.yes):
+        sys.exit("bear_lint: --wiki/-w requires --mark to use --dry-run or --yes")
 
     if parsed.by_tag and not parsed.output:
         sys.exit("bear_lint: --by-tag/-t requires -o/--output")
@@ -1391,6 +1401,7 @@ def main():
     dry_run = parsed.dry_run
     yes = parsed.yes
     by_tag = parsed.by_tag
+    mark = parsed.mark
 
     if not parsed.wiki and not parsed.orphans and not parsed.all and parsed.target is None:
         sys.exit("bear_lint: missing note ID or --all")
@@ -1398,7 +1409,7 @@ def main():
     sections = [] if output_note else None
 
     if parsed.wiki:
-        lint_wiki(sections=sections, by_tag=by_tag)
+        lint_wiki(sections=sections, by_tag=by_tag, mark=mark, dry_run=dry_run, yes=yes)
     elif parsed.orphans:
         lint_orphans(sections=sections, by_tag=by_tag)
     elif parsed.all:
