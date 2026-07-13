@@ -823,6 +823,47 @@ def test_lint_wiki_mark_writes_back_unmark_only_changes():
     assert any("marker removed" in s for s in sections), sections
 
 
+def test_lint_wiki_mark_handles_marked_and_unmarked_in_same_note():
+    notes_json = json.dumps([
+        {"id": "id-1", "title": "Note One", "tags": []},
+        {"id": "id-2", "title": "Now Exists", "tags": []},
+    ])
+    contents = {
+        "id-1": (
+            "# Note One\n\n"
+            "See [[Still Missing]] and [[Now Exists +]].\n"
+        ),
+        "id-2": "# Now Exists\n\nNo links.\n",
+    }
+    written = {}
+
+    def fake_bearcli(*args, **kwargs):
+        if args[0] == "list":
+            return notes_json
+        if args[0] == "cat":
+            return contents[args[1]]
+        if args[0] == "overwrite":
+            written[args[1]] = kwargs.get("stdin")
+            return ""
+        raise AssertionError(f"unexpected bearcli call: {args}")
+
+    orig_bearcli = bear_lint.bearcli
+    bear_lint.bearcli = fake_bearcli
+    try:
+        sections = []
+        bear_lint.lint_wiki(sections=sections, mark=True, yes=True)
+    finally:
+        bear_lint.bearcli = orig_bearcli
+
+    assert written["id-1"] == (
+        "# Note One\n\nSee [[Still Missing +]] and [[Now Exists]].\n"
+    ), written
+    assert "[[Now Exists +]]" not in written["id-1"], written
+
+    assert any("Still Missing +" in s for s in sections), sections
+    assert any("marker removed" in s for s in sections), sections
+
+
 def test_lint_wiki_without_mark_never_writes():
     notes_json = json.dumps([{"id": "id-1", "title": "Note One", "tags": []}])
     contents = {"id-1": "# Note One\n\nSee [[Missing Note]].\n"}
