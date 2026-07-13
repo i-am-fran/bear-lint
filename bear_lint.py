@@ -7,6 +7,7 @@ USAGE
   bear_lint.py --all|-a [-o] [-n] [-y]    # lint all notes (prompts for confirmation unless -y/-n)
   bear_lint.py --all|-a "#tag" [-o] [-n] [-y]   # lint notes matching a Bear search query
   bear_lint.py --wiki|-w [-o]             # vault-wide: report dangling [[wikilinks]]
+  bear_lint.py --wiki|-w --mark [-y|-n]   # ...and mark them in the note itself (" +")
   bear_lint.py --orphans [-o]             # vault-wide: report notes with no incoming [[wikilinks]]
   bear_lint.py <note-id>|--all|--wiki|--orphans -o -t   # group the -o report by tag (H2 tag, H3 note title)
   bear_lint.py --selftest                 # sanity check, no Bear needed
@@ -24,7 +25,7 @@ import sys
 from dataclasses import dataclass, field
 from datetime import datetime
 
-__version__ = "1.6.0"
+__version__ = "1.7.0"
 
 BEARCLI_FALLBACK = "/Applications/Bear.app/Contents/MacOS/bearcli"
 
@@ -1265,8 +1266,17 @@ USAGE
   bear-lint --wiki|-w [-o]             Vault-wide: report [[wikilinks]] whose
                                         target note title doesn't exist.
                                         Standalone mode - can't be combined
-                                        with a note ID, --all, --dry-run,
-                                        --yes, or --orphans.
+                                        with a note ID or --all; --dry-run
+                                        and --yes require --mark.
+  bear-lint --wiki --mark [-y|-n]      ...and mark each one in the note
+                                        itself by appending " +", e.g.
+                                        [[Wikilink]] -> [[Wikilink +]], so
+                                        it's visible right in Bear. Marks
+                                        are self-healing: once a target note
+                                        exists, its " +" is stripped back
+                                        off on the next run. Prompts for
+                                        confirmation unless -y; -n previews
+                                        the diff without writing.
   bear-lint --orphans [-o]             Vault-wide: report notes that no
                                         other note links to via
                                         [[wikilinks]]. Standalone mode -
@@ -1294,6 +1304,16 @@ OPTIONS
                  Report — <timestamp>" instead, with a single section
                  listing every orphaned note as a plain, clickable
                  "[[wikilink]]" bullet.
+  --mark         With --wiki, mark each dangling wikilink in the note
+                 itself by appending " +" (e.g. "[[Wikilink]]" becomes
+                 "[[Wikilink +]]"), instead of only reporting it. Targets
+                 with a likely typo suggestion are left unmarked. Marking
+                 is idempotent and self-healing: once a target note exists,
+                 a previously added " +" is stripped back off on a later
+                 run. Requires --wiki, and enables --dry-run/-n and
+                 -y/--yes for --wiki the same way --all uses them
+                 (confirmation prompt unless -y, diff preview instead of
+                 writing with -n).
   -t, --by-tag   Group the -o report note by Bear tag instead of the default
                  flat list: each tag gets an H2 heading, each note under it
                  gets an H3. A note with multiple tags appears once under
@@ -1318,6 +1338,9 @@ EXAMPLES
   bear-lint -a -n              Preview every note's changes without writing.
   bear-lint --wiki             Report [[wikilinks]] with no matching note.
   bear-lint --wiki -o          ...and save the report as a note.
+  bear-lint --wiki --mark      Mark dangling [[wikilinks]] in place (asks to confirm).
+  bear-lint --wiki --mark -y   ...same, but skip the confirmation prompt.
+  bear-lint --wiki --mark -n   Preview which notes would be marked, without writing.
   bear-lint --orphans          Report notes with no incoming [[wikilinks]].
   bear-lint --orphans -o       ...and save the report as a note.
   bear-lint --all -o -t        Save the report grouped by tag (H2 tag, H3 note).
