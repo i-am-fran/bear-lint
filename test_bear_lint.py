@@ -665,6 +665,151 @@ def test_lint_wiki_by_tag_builds_report_entries_with_tags():
     assert "Missing Note" in entries[0].body, entries[0]
 
 
+def test_lint_wiki_mark_rewrites_dangling_link():
+    notes_json = json.dumps([
+        {"id": "id-1", "title": "Note One", "tags": []},
+    ])
+    contents = {"id-1": "# Note One\n\nSee [[Missing Note]].\n"}
+    written = {}
+
+    def fake_bearcli(*args, **kwargs):
+        if args[0] == "list":
+            return notes_json
+        if args[0] == "cat":
+            return contents[args[1]]
+        if args[0] == "overwrite":
+            written[args[1]] = kwargs.get("stdin")
+            return ""
+        raise AssertionError(f"unexpected bearcli call: {args}")
+
+    orig_bearcli = bear_lint.bearcli
+    bear_lint.bearcli = fake_bearcli
+    try:
+        sections = []
+        bear_lint.lint_wiki(sections=sections, mark=True, yes=True)
+    finally:
+        bear_lint.bearcli = orig_bearcli
+
+    assert written["id-1"] == "# Note One\n\nSee [[Missing Note +]].\n", written
+    assert any("Missing Note +" in s for s in sections), sections
+
+
+def test_lint_wiki_mark_dry_run_does_not_write():
+    notes_json = json.dumps([
+        {"id": "id-1", "title": "Note One", "tags": []},
+    ])
+    contents = {"id-1": "# Note One\n\nSee [[Missing Note]].\n"}
+
+    def fake_bearcli(*args, **kwargs):
+        if args[0] == "list":
+            return notes_json
+        if args[0] == "cat":
+            return contents[args[1]]
+        if args[0] == "overwrite":
+            raise AssertionError("dry-run should not write")
+        raise AssertionError(f"unexpected bearcli call: {args}")
+
+    orig_bearcli = bear_lint.bearcli
+    bear_lint.bearcli = fake_bearcli
+
+    import io
+    from contextlib import redirect_stderr
+
+    buf = io.StringIO()
+    try:
+        with redirect_stderr(buf):
+            bear_lint.lint_wiki(mark=True, dry_run=True)
+    finally:
+        bear_lint.bearcli = orig_bearcli
+
+    assert "Missing Note +" in buf.getvalue(), buf.getvalue()
+
+
+def test_lint_wiki_mark_leaves_typo_suggestions_unmarked():
+    notes_json = json.dumps([
+        {"id": "id-1", "title": "Note One", "tags": []},
+        {"id": "id-2", "title": "Existing Note", "tags": []},
+    ])
+    contents = {
+        "id-1": "# Note One\n\nSee [[existing note]].\n",
+        "id-2": "# Existing Note\n\nNo links.\n",
+    }
+    written = {}
+
+    def fake_bearcli(*args, **kwargs):
+        if args[0] == "list":
+            return notes_json
+        if args[0] == "cat":
+            return contents[args[1]]
+        if args[0] == "overwrite":
+            written[args[1]] = kwargs.get("stdin")
+            return ""
+        raise AssertionError(f"unexpected bearcli call: {args}")
+
+    orig_bearcli = bear_lint.bearcli
+    bear_lint.bearcli = fake_bearcli
+    try:
+        bear_lint.lint_wiki(mark=True, yes=True)
+    finally:
+        bear_lint.bearcli = orig_bearcli
+
+    assert "id-1" not in written, written
+
+
+def test_lint_wiki_mark_writes_back_unmark_only_changes():
+    notes_json = json.dumps([
+        {"id": "id-1", "title": "Note One", "tags": []},
+        {"id": "id-2", "title": "Missing Note", "tags": []},
+    ])
+    contents = {
+        "id-1": "# Note One\n\nSee [[Missing Note +]].\n",
+        "id-2": "# Missing Note\n\nNo links.\n",
+    }
+    written = {}
+
+    def fake_bearcli(*args, **kwargs):
+        if args[0] == "list":
+            return notes_json
+        if args[0] == "cat":
+            return contents[args[1]]
+        if args[0] == "overwrite":
+            written[args[1]] = kwargs.get("stdin")
+            return ""
+        raise AssertionError(f"unexpected bearcli call: {args}")
+
+    orig_bearcli = bear_lint.bearcli
+    bear_lint.bearcli = fake_bearcli
+    try:
+        sections = []
+        bear_lint.lint_wiki(sections=sections, mark=True, yes=True)
+    finally:
+        bear_lint.bearcli = orig_bearcli
+
+    assert written["id-1"] == "# Note One\n\nSee [[Missing Note]].\n", written
+    assert any("marker removed" in s for s in sections), sections
+
+
+def test_lint_wiki_without_mark_never_writes():
+    notes_json = json.dumps([{"id": "id-1", "title": "Note One", "tags": []}])
+    contents = {"id-1": "# Note One\n\nSee [[Missing Note]].\n"}
+
+    def fake_bearcli(*args, **kwargs):
+        if args[0] == "list":
+            return notes_json
+        if args[0] == "cat":
+            return contents[args[1]]
+        if args[0] == "overwrite":
+            raise AssertionError("plain --wiki should never write")
+        raise AssertionError(f"unexpected bearcli call: {args}")
+
+    orig_bearcli = bear_lint.bearcli
+    bear_lint.bearcli = fake_bearcli
+    try:
+        bear_lint.lint_wiki(sections=[])
+    finally:
+        bear_lint.bearcli = orig_bearcli
+
+
 def test_lint_orphans_flags_notes_with_no_incoming_links():
     notes_json = json.dumps([
         {"id": "id-1", "title": "Note One"},

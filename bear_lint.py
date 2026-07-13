@@ -1086,7 +1086,7 @@ def mark_dangling_wikilinks(lines, mask, titles, titles_by_lower):
     return new_lines, marked, unmarked
 
 
-def lint_wiki(sections=None, by_tag=False):
+def lint_wiki(sections=None, by_tag=False, mark=False, dry_run=False, yes=False):
     try:
         out = bearcli("list", "--format", "json", "--fields", "id,title,tags")
     except BearcliError as e:
@@ -1101,12 +1101,20 @@ def lint_wiki(sections=None, by_tag=False):
         print("No notes found.", file=sys.stderr)
         return
 
+    if mark and not yes and not dry_run:
+        answer = input(f"About to mark dangling wikilinks in {len(notes)} notes — continue? [y/N] ")
+        if answer.strip().lower() != "y":
+            print("Aborted.", file=sys.stderr)
+            return
+
     titles = {note["title"] for note in notes}
     titles_by_lower = {t.lower(): t for t in titles}
 
     checked = 0
     flagged_notes = 0
     total_targets = 0
+    total_marked = 0
+    total_unmarked = 0
 
     for note in notes:
         # bear-lint's own report notes (#bear-lint) contain real, unescaped
@@ -1131,32 +1139,60 @@ def lint_wiki(sections=None, by_tag=False):
         found = []
         check_dangling_wikilinks(lines, mask, titles, titles_by_lower, found)
 
-        if not found:
+        content_changed = False
+        marked_now = set()
+        unmarked_now = set()
+        if mark:
+            new_lines, marked_now, unmarked_now = mark_dangling_wikilinks(lines, mask, titles, titles_by_lower)
+            new_content = "\n".join(new_lines)
+            content_changed = new_content != content
+            if content_changed:
+                label = f"{title} ({note_id})"
+                if dry_run:
+                    print_dry_run_diff(content, new_content, label)
+                else:
+                    try:
+                        bearcli("overwrite", note_id, "--no-update-modified", stdin=new_content)
+                    except BearcliError as e:
+                        print(f"{title}: could not write ({e})", file=sys.stderr)
+                        content_changed = False
+
+        if not found and not content_changed:
             continue
 
         by_target = {}
         for wt in found:
             by_target.setdefault(wt.target, wt.suggestion)
-        targets = [WikiTarget(t, s) for t, s in sorted(by_target.items())]
+        targets = [WikiTarget(t, s, marked=(mark and s is None)) for t, s in sorted(by_target.items())]
         flagged_notes += 1
         total_targets += len(targets)
+        total_marked += len(marked_now)
+        total_unmarked += len(unmarked_now)
+
         print(f"\n{title}:", file=sys.stderr)
         for wt in targets:
             if wt.suggestion:
                 print(f"  [[{wt.target}]] -> possible typo, did you mean [[{wt.suggestion}]]?", file=sys.stderr)
+            elif wt.marked:
+                print(f"  [[{wt.target} +]]", file=sys.stderr)
             else:
                 print(f"  [[{wt.target}]]", file=sys.stderr)
+        for t in sorted(unmarked_now):
+            print(f"  [[{t}]] -> no longer dangling, marker removed", file=sys.stderr)
         if sections is not None:
-            sections.append(_wiki_report_item(title, targets, tags, by_tag))
+            sections.append(_wiki_report_item(title, targets, tags, by_tag, unmarked=unmarked_now))
 
-    print(
-        f"\n{checked} notes checked, {total_targets} dangling wikilink(s) found in {flagged_notes} note(s).",
-        file=sys.stderr,
-    )
-    if sections is not None:
-        sections.append(
-            f"---\n\n**{checked} notes checked, {total_targets} dangling wikilink(s) found in {flagged_notes} note(s).**"
+    if mark:
+        verb = "would be marked" if dry_run else "marked"
+        summary = (
+            f"{checked} notes checked, {total_targets} dangling wikilink(s) found in {flagged_notes} note(s), "
+            f"{total_marked} {verb}, {total_unmarked} unmarked."
         )
+    else:
+        summary = f"{checked} notes checked, {total_targets} dangling wikilink(s) found in {flagged_notes} note(s)."
+    print(f"\n{summary}", file=sys.stderr)
+    if sections is not None:
+        sections.append(f"---\n\n**{summary}**")
 
 
 def lint_orphans(sections=None, by_tag=False):
