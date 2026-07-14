@@ -1355,7 +1355,7 @@ def open_random(count=1, tag=None):
 
     for note in random.sample(notes, min(count, len(notes))):
         try:
-            bearcli("open", note["id"])
+            bearcli("app", "open", note["id"])
         except BearcliError as e:
             print(f"{note['title']}: could not open ({e})", file=sys.stderr)
             continue

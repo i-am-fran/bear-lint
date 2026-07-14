@@ -1481,8 +1481,8 @@ def test_open_random_opens_chosen_notes():
     def fake_bearcli(*args, **kwargs):
         if args[0] == "list":
             return notes_json
-        if args[0] == "open":
-            opened.append(args[1])
+        if args[0] == "app" and args[1] == "open":
+            opened.append(args[2])
             return ""
         raise AssertionError(f"unexpected bearcli call: {args}")
 
@@ -1509,8 +1509,8 @@ def test_open_random_clamps_count_to_available_notes():
     def fake_bearcli(*args, **kwargs):
         if args[0] == "list":
             return notes_json
-        if args[0] == "open":
-            opened.append(args[1])
+        if args[0] == "app" and args[1] == "open":
+            opened.append(args[2])
             return ""
         raise AssertionError(f"unexpected bearcli call: {args}")
 
@@ -1534,8 +1534,8 @@ def test_open_random_scoped_by_tag():
     def fake_bearcli(*args, **kwargs):
         if args[0] == "list":
             return notes_json
-        if args[0] == "open":
-            opened.append(args[1])
+        if args[0] == "app" and args[1] == "open":
+            opened.append(args[2])
             return ""
         raise AssertionError(f"unexpected bearcli call: {args}")
 
@@ -1557,7 +1557,7 @@ def test_open_random_excludes_bearkit_tagged_notes():
     def fake_bearcli(*args, **kwargs):
         if args[0] == "list":
             return notes_json
-        if args[0] == "open":
+        if args[0] == "app" and args[1] == "open":
             raise AssertionError("open_random should never open a #bearkit/* tagged note")
         raise AssertionError(f"unexpected bearcli call: {args}")
 
