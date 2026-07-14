@@ -733,11 +733,13 @@ def render_orphans_section(titles):
 def render_duplicates_section(title, notes):
     # [[Title]] wikilinks can't disambiguate between duplicates, so each
     # note renders as a clickable bear:// link instead, with its tags as a
-    # disambiguating suffix.
+    # disambiguating suffix - backtick-shielded so Bear doesn't parse them
+    # as real tags and silently apply them to the report note itself.
     heading = f"## {title} ({len(notes)} notes)"
     lines = []
     for n in notes:
-        tag_suffix = f" — {', '.join(n.get('tags', []))}" if n.get("tags") else ""
+        tags = n.get("tags", [])
+        tag_suffix = f" — {', '.join(shield_heading_tag(t) for t in tags)}" if tags else ""
         lines.append(f"- [Open `{n['id']}`](bear://x-callback-url/open-note?id={n['id']}){tag_suffix}")
     return f"{heading}\n\n" + "\n".join(lines)
 

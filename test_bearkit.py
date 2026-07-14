@@ -1416,7 +1416,10 @@ def test_find_duplicates_groups_by_title():
     assert sections[0].startswith("## Same Title (2 notes)"), sections[0]
     assert "bear://x-callback-url/open-note?id=id-1" in sections[0], sections[0]
     assert "bear://x-callback-url/open-note?id=id-2" in sections[0], sections[0]
-    assert "#work" in sections[0] and "#home" in sections[0], sections[0]
+    # Tags are backtick-shielded so Bear doesn't parse them as real tags and
+    # silently apply them to the report note itself.
+    assert "`#work`" in sections[0] and "`#home`" in sections[0], sections[0]
+    assert "— #work" not in sections[0] and "— #home" not in sections[0], sections[0]
 
 
 def test_find_duplicates_scoped_by_tag():
