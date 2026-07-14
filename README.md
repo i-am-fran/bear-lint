@@ -1,10 +1,18 @@
-# bear-lint
+# BearKit
 
 [Project site](https://i-am-fran.github.io/bear-lint/)
 
-A small Markdown linter for [Bear](https://bear.app) notes. It checks and fixes common Markdown inconsistencies — bullet markers, emphasis style, checklist syntax, heading structure, tags, and more — by reading and writing your notes directly via `bearcli`.
+A companion tool for [Bear](https://bear.app) notes. It checks and fixes common Markdown inconsistencies, finds orphaned/duplicate/dangling-linked notes, and can open random notes for review — all by reading and writing your notes directly via `bearcli`.
 
-## What it checks
+Actions split into three categories:
+
+- **Lists** (`orphans`, `duplicates`, `wikilinks`) never change your notes, and automatically save their report as a new Bear note tagged `#bearkit/lists`.
+- **Edits** (`lint`, `wikilinks --mark`) change your notes, and automatically save a summary as a new Bear note tagged `#bearkit/edits` — unless run with `--dry-run`, since nothing was actually changed. They ask for confirmation first unless `-y`/`--yes` is given.
+- **Open** (`random`) opens notes in the Bear app and never creates a summary note.
+
+Every action excludes bearkit's own `#bearkit/lists` and `#bearkit/edits` report notes from its scans, so past reports never show up as orphans, duplicates, or lint/wikilink findings.
+
+## What `lint` checks
 
 | Rule | Behaviour |
 |---|---|
@@ -26,7 +34,7 @@ A small Markdown linter for [Bear](https://bear.app) notes. It checks and fixes 
 | Blockquote spacing | Adds the missing space after `>`, e.g. `>Text` → `> Text` |
 | List spacing | Adds a blank line separating a list from the paragraph before/after it; covers both bullet/checklist lists and ordered (`1.` / `1)`) lists |
 
-`--wiki`/`-w` and `--orphans` are separate, vault-wide commands (see Usage below): `--wiki` reports `[[wikilinks]]` pointing to notes that don't exist (optionally marking them in place with `--mark`), `--orphans` reports notes that no other note links to. Neither is one of the per-note rules above since both need every note's title and links compared against the whole vault, not just the one note being linted.
+`wikilinks` and `orphans` and `duplicates` are separate, vault-wide commands (see Usage below): `wikilinks` reports `[[wikilinks]]` pointing to notes that don't exist (optionally marking them in place with `--mark`), `orphans` reports notes that no other note links to, and `duplicates` reports notes that share the same title. None of these are per-note `lint` rules, since all three need every note's title and links compared against the whole vault, not just the one note being linted.
 
 ## Requirements
 
@@ -39,80 +47,95 @@ A small Markdown linter for [Bear](https://bear.app) notes. It checks and fixes 
 git clone https://github.com/i-am-fran/bear-lint.git
 ```
 
-Then make it runnable as `bear-lint` from anywhere. Pick one:
+Then make it runnable as `bearkit` from anywhere. Pick one:
 
 **Alias** (add to `~/.zshrc`):
 ```bash
-alias bear-lint='python3 /path/to/bear-lint/bear_lint.py'
+alias bearkit='python3 /path/to/bear-lint/bearkit.py'
 ```
 
 **Symlink** (makes it a first-class command on your PATH):
 ```bash
-chmod +x /path/to/bear-lint/bear_lint.py
-ln -s /path/to/bear-lint/bear_lint.py /usr/local/bin/bear-lint
+chmod +x /path/to/bear-lint/bearkit.py
+ln -s /path/to/bear-lint/bearkit.py /usr/local/bin/bearkit
 ```
 
-After either, reload your shell and `bear-lint --help` will work.
+After either, reload your shell and `bearkit --help` will work.
 
 ## Usage
 
 ```bash
-bear-lint --help                 # show all commands
-bear-lint --version              # print the installed version
-bear-lint <note-id>              # lint one note by ID
-bear-lint --all                  # lint all notes (always asks for confirmation first)
-bear-lint -a "#tag"              # -a is a short alias for --all
-bear-lint --all "#tag"           # lint notes matching a Bear search query (also confirms first)
-bear-lint --all "#tag" -y        # skip the confirmation prompt (cron/launchd-friendly)
-bear-lint --selftest             # sanity check, no Bear needed
-bear-lint <note-id> -o           # lint one note and also save the report as a Bear note
-bear-lint --all "#tag" -o        # same, for a batch run
-bear-lint <note-id> -n           # preview the diff without writing anything back
-bear-lint --all -n               # preview every note's changes without writing (no prompt)
-bear-lint --wiki                 # vault-wide: report [[wikilinks]] with no matching note
-bear-lint --wiki -o              # ...and save the report as a Bear note
-bear-lint --wiki --mark          # ...and mark dangling wikilinks in the note itself (" +")
-bear-lint --wiki --mark -y       # ...same, but skip the confirmation prompt
-bear-lint --orphans              # vault-wide: report notes with no incoming [[wikilinks]]
-bear-lint --orphans -o           # ...and save the report as a Bear note
-bear-lint --all -o -t            # save the report grouped by tag (H2 tag, H3 note title)
+bearkit --help                       # show all commands
+bearkit --version                    # print the installed version
+bearkit orphans                      # list notes with no incoming [[wikilinks]]
+bearkit orphans -t work              # ...scoped to notes tagged #work
+bearkit duplicates                   # list notes that share the same title
+bearkit wikilinks                    # list [[wikilinks]] with no matching note
+bearkit wikilinks --mark             # ...and mark dangling wikilinks in place (" +")
+bearkit wikilinks --mark -y          # ...same, but skip the confirmation prompt
+bearkit wikilinks --mark -n          # preview which notes would be marked, without writing
+bearkit lint                         # lint every note (asks for confirmation)
+bearkit lint -t work                 # ...only notes tagged #work
+bearkit lint -t work -y              # ...same, but skip the confirmation prompt
+bearkit lint -n                      # preview every note's changes without writing (no prompt)
+bearkit lint -i <note-id>            # lint a single note by ID (no confirmation)
+bearkit lint -i <note-id> -n         # ...preview the diff without writing it
+bearkit random                       # open one random note in Bear
+bearkit random 4 -t evergreen        # open 4 random notes tagged #evergreen
+bearkit --selftest                   # sanity check against a built-in sample note
 ```
 
-Get a note's ID from `bearcli list` or `bearcli search "query"`. Output shows `Title (id): N issue(s) fixed`. Issue reports go to stderr; exit code is 0 on success. An unrecognised flag (e.g. a typo like `--al`) is rejected with a clear error instead of silently being treated as a note ID or search query.
+Get a note's ID from `bearcli list` or `bearcli search "query"`. Output shows `Title (id): N issue(s) fixed`. Issue reports go to stderr; exit code is 0 on success.
 
-Add `-o` / `--output` to also save the report inside Bear: a new note per run, titled `Bear Lint Report — <timestamp>` and tagged `#bear-lint`, with a one-line description below the title explaining what the note contains. The body is Markdown, not a plain-text mirror of stderr: each linted note gets a `[[wikilink]]` heading back to it, issues needing manual attention render as `> [!WARNING]` callouts, stub notes as `> [!TIP]`, and auto-fixed issues as a plain bullet list. No note is created if there's nothing to report (aborted run, or no notes matched the query).
+Add `-t <tagName>` to scope any command to notes carrying that Bear tag — nested tags match too, so `-t people` also matches a note only tagged `#people/authors`.
 
-Add `-t` / `--by-tag` to reorganize that same `-o` report by Bear tag instead of the default flat list: each tag gets its own H2 heading, and every note under it renders one level deeper, as an H3. A note with more than one tag is repeated under each of its tags; notes with no tags at all are grouped under a catch-all `## Untagged` heading. Tag headings are rendered as `` `#tag` `` (backtick-wrapped) rather than bare `#tag` text, so Bear doesn't parse the heading itself as a real tag and silently apply it to the report note. `-t` only changes the `-o` note's structure, so it requires `-o`/`--output` and works with every report mode (`lint_one`, `--all`, `--wiki`, `--orphans`). `--orphans` is the one exception to the H2/H3 shape: since every orphaned note's body is the same boilerplate ("nothing links here"), an H3 per note would just repeat that line over and over, so grouped orphan reports render each tag's orphans as a plain `- [[wikilink]]` bullet list under its H2 instead.
+Add `--group-by-tag` (on `orphans`, `wikilinks`, `lint`) to reorganize the summary note by Bear tag instead of a flat list: each tag gets an H2 heading, each note under it gets an H3. A note with multiple tags appears once under each of its tags; untagged notes are grouped under an "Untagged" H2. `orphans` reports have no per-note body worth heading, so grouped orphan output is a plain `- [[wikilink]]` bullet list under each tag's H2 instead of one H3 per note.
 
-Add `-n` / `--dry-run` to preview what would change — a unified diff per note — without calling back to Bear at all. Since nothing destructive happens, `--dry-run` also skips the `--all` confirmation prompt. Add `-y` / `--yes` to skip that same prompt for a real (writing) run, e.g. from cron or launchd.
+Add `-n` / `--dry-run` (on `lint`, `wikilinks --mark`) to preview what would change — a unified diff per note — without calling back to Bear at all, and without creating a summary note (nothing was actually changed). Since nothing destructive happens, `--dry-run` also skips the confirmation prompt.
 
-Add `-w` / `--wiki` for a vault-wide check: it scans every note for `[[wikilinks]]` (reusing the same well-formed-link detection as the per-note wiki-link check), fetches every note's title via `bearcli list`, and flags any wikilink whose target doesn't match an existing note title. Bear's native `[[Note/Heading]]` (heading link) and `[[Note|Alias]]` (alias link, display text only — these may combine as `[[Note/Heading|Alias]]`) syntax is recognized: the note-title portion is resolved from the compound target before being checked against real titles, so a valid heading or alias link is never misflagged as dangling. A dangling target is further checked against every real note title for a likely typo — an exact case-insensitive match, or a close match via `difflib.get_close_matches` — and if one is found, it renders as `- [[target]] → possible typo, did you mean [[Real Title]]?` instead of a plain bullet, so likely mistakes stand out from intentional links to things that were never meant to be notes (people, apps, concepts); for a compound target the suggestion preserves the original heading/alias suffix rather than silently dropping it. Notes tagged `#bear-lint` (i.e. bear-lint's own report notes) are skipped as scan sources — their bullet lists are real `[[wikilinks]]` to nonexistent notes by design, so scanning them would recursively flag every past report. This is a standalone command mode, not a per-note rule — it can't be combined with a note ID, `--all`, or `--orphans`, but can be combined with `-o`; `--dry-run` and `--yes` are rejected unless `--mark` is also given (see the following paragraph). With `-o`, the report note is titled `Bear Wikilinks Report — <timestamp>` (distinct from the regular `Bear Lint Report`) and each section is just a plain, clickable list of the dangling `[[wikilinks]]` found under that note's heading (possible typos listed first) — no callouts, note IDs, or line numbers, and only notes with an actual dangling link get a section.
+Add `-y` / `--yes` (on `lint`, `wikilinks --mark`) to skip the confirmation prompt, e.g. from cron or launchd.
 
-Add `--mark` (with `--wiki`) to go a step further: instead of only reporting a dangling target, it rewrites the wikilink in the note itself, appending a trailing marker — `[[Wikilink]]` becomes `[[Wikilink +]]` — so it stands out right inside Bear's own UI. Only targets with no typo suggestion are marked (a likely typo is left for the "did you mean" report to guide a manual fix instead). A heading or alias link that resolves to a real note is never marked; a genuinely dangling one keeps its `/Heading` and/or `|Alias` text intact, with the `" +"` marker appended at the very end (e.g. `[[Missing Note/Heading]]` becomes `[[Missing Note/Heading +]]`). Marking is idempotent and self-healing: re-running never doubles the marker, and once the target note actually gets created, its `" +"` is automatically stripped back off on the next run. Since this writes to notes, `--wiki --mark` behaves like `--all` here — it asks for confirmation unless `-y`/`--yes` is given, and `-n`/`--dry-run` previews the diff per note instead of writing (both flags are otherwise rejected by plain `--wiki`, which never writes).
+Add `--mark` (with `wikilinks`) to go a step further: instead of only reporting a dangling target, it rewrites the wikilink in the note itself, appending a trailing marker — `[[Wikilink]]` becomes `[[Wikilink +]]` — so it stands out right inside Bear's own UI. Only targets with no typo suggestion are marked (a likely typo is left for the "did you mean" report to guide a manual fix instead). A heading or alias link that resolves to a real note is never marked; a genuinely dangling one keeps its `/Heading` and/or `|Alias` text intact, with the `" +"` marker appended at the very end. Marking is idempotent and self-healing: re-running never doubles the marker, and once the target note actually gets created, its `" +"` is automatically stripped back off on the next run.
 
-Add `--orphans` for the mirror-image vault-wide check: notes that nothing else links to. It fetches every note's title and content the same way `--wiki` does, scans each note for `[[wikilinks]]` (recognizing Bear's `Note/Heading` and `Note|Alias` compound syntax, so a note that's only ever linked to via a heading or alias link still counts as linked), and builds a vault-wide set of every title that's been linked to at least once; any note whose title never shows up in that set is flagged as an orphan. Notes tagged `#bear-lint` are excluded entirely — both as scan sources and as orphan candidates — since nothing ever links back to a timestamped report note, and flagging every past report as an orphan on every run would be pure noise. Like `--wiki`, this is a standalone command mode — it can't be combined with a note ID, `--all`, `--dry-run`, `--yes`, or `--wiki`, but can be combined with `-o`. With `-o`, the report note is titled `Bear Orphans Report — <timestamp>`, with a single `## Orphaned Notes` section listing every orphaned note as a plain, clickable `[[wikilink]]` bullet.
+## Actions in depth
+
+### `wikilinks`
+
+Scans every note for `[[wikilinks]]` (reusing the same well-formed-link detection as `lint`'s per-note check), fetches every note's title via `bearcli list`, and flags any wikilink whose target doesn't match an existing note title. Bear's native `[[Note/Heading]]` (heading link) and `[[Note|Alias]]` (alias link, display text only — these may combine as `[[Note/Heading|Alias]]`) syntax is recognized: the note-title portion is resolved from the compound target before being checked against real titles, so a valid heading or alias link is never misflagged as dangling. A dangling target is further checked against every real note title for a likely typo — an exact case-insensitive match, or a close match via `difflib.get_close_matches` — and if one is found, it renders as `- [[target]] → possible typo, did you mean [[Real Title]]?` instead of a plain bullet. `-t` scopes which notes are scanned as *sources*, but target resolution always considers the whole vault, since a scoped note can still legitimately link to something outside its tag.
+
+### `orphans`
+
+The mirror-image vault-wide check: notes that nothing else links to. It scans every note for `[[wikilinks]]` (recognizing Bear's `Note/Heading` and `Note|Alias` compound syntax) and builds a vault-wide set of every title that's been linked to at least once; any note whose title never shows up in that set is flagged as an orphan. `-t` only narrows which titles are *reportable* — the incoming-link scan always covers the whole vault, since a note outside the tag scope can still legitimately link to one inside it.
+
+### `duplicates`
+
+Finds notes that share the same title. Since a `[[Title]]` wikilink can't disambiguate between duplicates, each note in the report renders as a clickable `bear://` link with its tags as a disambiguating suffix, instead of a wikilink.
+
+### `random`
+
+Opens one or more random notes directly in the Bear app via `bearcli open` (1–9 notes, default 1). If `count` exceeds the number of matching notes, it opens all of them rather than erroring.
 
 ## Try it without touching your notes
 
 ```bash
-python3 bear_lint.py --selftest
+python3 bearkit.py --selftest
 ```
 
-This runs all rules against a bundled sample note and prints the fixed text plus a report so you can see exactly what it does.
+This runs all lint rules against a bundled sample note and prints the fixed text plus a report so you can see exactly what it does.
 
 ## Testing
 
-`test_bear_lint.py` is a plain assert-based test suite (no pytest) covering each rule in isolation plus an idempotency check — running `lint_note()` twice on the same input must produce identical output the second time, which catches autofixes that re-trigger each other. Run it with:
+`test_bearkit.py` is a plain assert-based test suite (no pytest) covering each rule and command in isolation, plus an idempotency check for `lint_note()` — running it twice on the same input must produce identical output the second time, which catches autofixes that re-trigger each other. Run it with:
 
 ```bash
-python3 test_bear_lint.py
+python3 test_bearkit.py
 ```
 
-`test-note.md` in this repo is a single note deliberately built to trigger every rule at once. Import it into Bear (`File → Import → Files/Folders…`, or drag it onto Bear's note list), then run:
+`test-note.md` in this repo is a single note deliberately built to trigger every `lint` rule at once. Import it into Bear (`File → Import → Files/Folders…`, or drag it onto Bear's note list), then run:
 
 ```bash
 bearcli search "Bear Lint Test Note" --fields id,title
-python3 bear_lint.py <note-id>
+python3 bearkit.py lint -i <note-id>
 ```
 
 Compare what Bear shows afterwards against the table above. (The stub-notes check isn't exercised by this fixture — a note with enough content to trigger every other rule can't also be an empty stub — so test it separately with a note that has only an H1 title and nothing else.)
@@ -126,8 +149,13 @@ Writes use bearcli's `--no-update-modified` flag, so fixed notes keep their orig
 ## Limitations
 
 - Heuristic-based, not a full Markdown parser. Handles fenced code blocks, inline code spans, and YAML frontmatter (a `---` on line 1 with a matching closing `---`) as protected regions (aside from stripping blank lines inside frontmatter), but very unusual formatting may confuse a rule or two.
-- A few rules are report-only by design (missing/duplicate H1, heading-level skips, stub notes, tag format, wiki-link problems), because auto-fixing them risks changing the note's actual structure or meaning.
+- A few `lint` rules are report-only by design (missing/duplicate H1, heading-level skips, stub notes, tag format, wiki-link problems), because auto-fixing them risks changing the note's actual structure or meaning.
 - Locked/encrypted Bear notes are skipped automatically.
+- `random count` silently clamps to the number of available notes rather than erroring if you ask for more than exist in scope.
+
+## Upgrading from bear-lint
+
+Old `#bear-lint`-tagged report notes from bear-lint v1 aren't recognized by bearkit's `#bearkit/*` self-exclusion, so they won't automatically stay out of scans. Search `#bear-lint` in Bear and delete them manually once you've confirmed you no longer need them.
 
 ## Changelog
 
