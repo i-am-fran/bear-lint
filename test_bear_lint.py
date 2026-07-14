@@ -102,22 +102,38 @@ def test_wiki_link():
 def test_extract_wikilink_targets_basic():
     lines = ["# Title", "See [[Note A]] and [[Note B]]."]
     mask = bear_lint.protected_mask(lines)
-    targets = bear_lint.extract_wikilink_targets(lines, mask)
+    targets = bear_lint.extract_wikilink_targets(lines, mask, set())
     assert targets == {"Note A", "Note B"}, targets
 
 
 def test_extract_wikilink_targets_skips_masked_lines():
     lines = ["# Title", "```", "[[Note In Code]]", "```", "[[Note Outside]]"]
     mask = bear_lint.protected_mask(lines)
-    targets = bear_lint.extract_wikilink_targets(lines, mask)
+    targets = bear_lint.extract_wikilink_targets(lines, mask, set())
     assert targets == {"Note Outside"}, targets
 
 
 def test_extract_wikilink_targets_ignores_empty_link():
     lines = ["# Title", "See [[ ]] here."]
     mask = bear_lint.protected_mask(lines)
-    targets = bear_lint.extract_wikilink_targets(lines, mask)
+    targets = bear_lint.extract_wikilink_targets(lines, mask, set())
     assert targets == set(), targets
+
+
+def test_extract_wikilink_targets_resolves_heading_link():
+    lines = ["# Title", "See [[Note A/Some Heading]]."]
+    mask = bear_lint.protected_mask(lines)
+    titles = {"Note A"}
+    targets = bear_lint.extract_wikilink_targets(lines, mask, titles)
+    assert targets == {"Note A"}, targets
+
+
+def test_extract_wikilink_targets_resolves_alias_link():
+    lines = ["# Title", "See [[Note A|display text]]."]
+    mask = bear_lint.protected_mask(lines)
+    titles = {"Note A"}
+    targets = bear_lint.extract_wikilink_targets(lines, mask, titles)
+    assert targets == {"Note A"}, targets
 
 
 def _titles_by_lower(titles):
@@ -218,6 +234,98 @@ def test_check_dangling_wikilinks_unmarks_when_target_now_exists():
     assert found == [], found
 
 
+def test_wiki_note_title_whole_string_exact_match_wins():
+    titles = {"A/B"}
+    assert bear_lint._wiki_note_title("A/B", titles) == "A/B"
+
+
+def test_wiki_note_title_alias_only():
+    titles = {"Note"}
+    assert bear_lint._wiki_note_title("Note|Alias", titles) == "Note"
+
+
+def test_wiki_note_title_heading_only():
+    titles = {"Note"}
+    assert bear_lint._wiki_note_title("Note/Heading", titles) == "Note"
+
+
+def test_wiki_note_title_heading_and_alias_combined():
+    titles = {"Note"}
+    assert bear_lint._wiki_note_title("Note/Heading|Alias", titles) == "Note"
+
+
+def test_wiki_note_title_alias_stripped_intermediate_match_wins():
+    # A literal note title containing "/" combined with an alias: the
+    # alias-stripped intermediate ("A/B") must match before the heading
+    # split ever touches the "/".
+    titles = {"A/B"}
+    assert bear_lint._wiki_note_title("A/B|Alias", titles) == "A/B"
+
+
+def test_wiki_note_title_no_match_falls_back_to_heading_stripped():
+    titles = {"Existing Note"}
+    assert bear_lint._wiki_note_title("Missing Thing/Heading", titles) == "Missing Thing"
+
+
+def test_check_dangling_wikilinks_heading_link_to_existing_note_not_flagged():
+    lines = ["# Title", "See [[Existing Note/Some Heading]] here."]
+    mask = bear_lint.protected_mask(lines)
+    titles = {"Existing Note", "Title"}
+    found = []
+    bear_lint.check_dangling_wikilinks(lines, mask, titles, _titles_by_lower(titles), found)
+    assert found == [], found
+
+
+def test_check_dangling_wikilinks_alias_link_to_existing_note_not_flagged():
+    lines = ["# Title", "See [[Existing Note|display text]] here."]
+    mask = bear_lint.protected_mask(lines)
+    titles = {"Existing Note", "Title"}
+    found = []
+    bear_lint.check_dangling_wikilinks(lines, mask, titles, _titles_by_lower(titles), found)
+    assert found == [], found
+
+
+def test_check_dangling_wikilinks_combined_heading_alias_to_existing_note_not_flagged():
+    lines = ["# Title", "See [[Existing Note/Some Heading|display text]] here."]
+    mask = bear_lint.protected_mask(lines)
+    titles = {"Existing Note", "Title"}
+    found = []
+    bear_lint.check_dangling_wikilinks(lines, mask, titles, _titles_by_lower(titles), found)
+    assert found == [], found
+
+
+def test_check_dangling_wikilinks_flags_dangling_heading_link_with_full_target():
+    lines = ["# Title", "See [[Missing Note/Some Heading]] here."]
+    mask = bear_lint.protected_mask(lines)
+    titles = {"Title"}
+    found = []
+    bear_lint.check_dangling_wikilinks(lines, mask, titles, _titles_by_lower(titles), found)
+    assert len(found) == 1, found
+    assert found[0].target == "Missing Note/Some Heading", found[0].target
+    assert found[0].suggestion is None, found[0].suggestion
+
+
+def test_check_dangling_wikilinks_typo_suggestion_preserves_heading_suffix():
+    lines = ["# Title", "See [[Existing Notee/Some Heading]] here."]
+    mask = bear_lint.protected_mask(lines)
+    titles = {"Existing Note", "Title"}
+    found = []
+    bear_lint.check_dangling_wikilinks(lines, mask, titles, _titles_by_lower(titles), found)
+    assert len(found) == 1, found
+    assert found[0].target == "Existing Notee/Some Heading", found[0].target
+    assert found[0].suggestion == "Existing Note/Some Heading", found[0].suggestion
+
+
+def test_check_dangling_wikilinks_typo_suggestion_preserves_alias_suffix():
+    lines = ["# Title", "See [[Existing Notee|display text]] here."]
+    mask = bear_lint.protected_mask(lines)
+    titles = {"Existing Note", "Title"}
+    found = []
+    bear_lint.check_dangling_wikilinks(lines, mask, titles, _titles_by_lower(titles), found)
+    assert len(found) == 1, found
+    assert found[0].suggestion == "Existing Note|display text", found[0].suggestion
+
+
 def test_mark_dangling_wikilinks_appends_marker():
     lines = ["# Title", "See [[Missing Note]] here."]
     mask = bear_lint.protected_mask(lines)
@@ -274,6 +382,56 @@ def test_mark_dangling_wikilinks_ignores_empty_link():
     titles = {"Title"}
     new_lines, marked, unmarked = bear_lint.mark_dangling_wikilinks(lines, mask, titles, _titles_by_lower(titles))
     assert new_lines == lines, new_lines
+    assert marked == set(), marked
+
+
+def test_mark_dangling_wikilinks_heading_link_to_existing_note_never_marked():
+    lines = ["# Title", "See [[Existing Note/Some Heading]] here."]
+    mask = bear_lint.protected_mask(lines)
+    titles = {"Title", "Existing Note"}
+    new_lines, marked, unmarked = bear_lint.mark_dangling_wikilinks(lines, mask, titles, _titles_by_lower(titles))
+    assert new_lines == lines, new_lines
+    assert marked == set(), marked
+    assert unmarked == set(), unmarked
+
+
+def test_mark_dangling_wikilinks_alias_link_to_existing_note_never_marked():
+    lines = ["# Title", "See [[Existing Note|display text]] here."]
+    mask = bear_lint.protected_mask(lines)
+    titles = {"Title", "Existing Note"}
+    new_lines, marked, unmarked = bear_lint.mark_dangling_wikilinks(lines, mask, titles, _titles_by_lower(titles))
+    assert new_lines == lines, new_lines
+    assert marked == set(), marked
+    assert unmarked == set(), unmarked
+
+
+def test_mark_dangling_wikilinks_dangling_heading_link_marks_suffix_at_end():
+    lines = ["# Title", "See [[Missing Note/Some Heading]] here."]
+    mask = bear_lint.protected_mask(lines)
+    titles = {"Title"}
+    new_lines, marked, unmarked = bear_lint.mark_dangling_wikilinks(lines, mask, titles, _titles_by_lower(titles))
+    assert new_lines[1] == "See [[Missing Note/Some Heading +]] here.", new_lines
+    assert marked == {"Missing Note/Some Heading"}, marked
+    assert unmarked == set(), unmarked
+
+
+def test_mark_dangling_wikilinks_compound_target_is_idempotent():
+    lines = ["# Title", "See [[Missing Note/Some Heading +]] here."]
+    mask = bear_lint.protected_mask(lines)
+    titles = {"Title"}
+    new_lines, marked, unmarked = bear_lint.mark_dangling_wikilinks(lines, mask, titles, _titles_by_lower(titles))
+    assert new_lines == lines, new_lines
+    assert marked == set(), marked
+    assert unmarked == set(), unmarked
+
+
+def test_mark_dangling_wikilinks_compound_target_unmarks_when_note_now_exists():
+    lines = ["# Title", "See [[Missing Note/Some Heading +]] here."]
+    mask = bear_lint.protected_mask(lines)
+    titles = {"Title", "Missing Note"}
+    new_lines, marked, unmarked = bear_lint.mark_dangling_wikilinks(lines, mask, titles, _titles_by_lower(titles))
+    assert new_lines[1] == "See [[Missing Note/Some Heading]] here.", new_lines
+    assert unmarked == {"Missing Note/Some Heading"}, unmarked
     assert marked == set(), marked
 
 
@@ -864,6 +1022,41 @@ def test_lint_wiki_mark_handles_marked_and_unmarked_in_same_note():
     assert any("marker removed" in s for s in sections), sections
 
 
+def test_lint_wiki_mark_does_not_corrupt_valid_heading_link():
+    # Regression test for the reported bug: a valid Bear heading-link like
+    # [[Bear/Things I don't love]] must never be rewritten by --mark.
+    notes_json = json.dumps([
+        {"id": "id-1", "title": "Note One", "tags": []},
+        {"id": "id-2", "title": "Bear", "tags": []},
+    ])
+    contents = {
+        "id-1": "# Note One\n\nSee [[Bear/Things I don't love]].\n",
+        "id-2": "# Bear\n\n## Things I don't love\n\nSome text.\n",
+    }
+    written = {}
+
+    def fake_bearcli(*args, **kwargs):
+        if args[0] == "list":
+            return notes_json
+        if args[0] == "cat":
+            return contents[args[1]]
+        if args[0] == "overwrite":
+            written[args[1]] = kwargs.get("stdin")
+            return ""
+        raise AssertionError(f"unexpected bearcli call: {args}")
+
+    orig_bearcli = bear_lint.bearcli
+    bear_lint.bearcli = fake_bearcli
+    try:
+        sections = []
+        bear_lint.lint_wiki(sections=sections, mark=True, yes=True)
+    finally:
+        bear_lint.bearcli = orig_bearcli
+
+    assert "id-1" not in written, written
+    assert not any("Things I don't love +" in s for s in sections), sections
+
+
 def test_lint_wiki_without_mark_never_writes():
     notes_json = json.dumps([{"id": "id-1", "title": "Note One", "tags": []}])
     contents = {"id-1": "# Note One\n\nSee [[Missing Note]].\n"}
@@ -1003,6 +1196,42 @@ def test_lint_orphans_by_tag_groups_titles_as_flat_lists():
     assert "### " not in "\n".join(sections), sections
     assert "## #home" not in "\n".join(sections), sections
     assert "## #work" not in "\n".join(sections), sections
+
+
+def test_lint_orphans_heading_only_link_counts_as_incoming_link():
+    notes_json = json.dumps([
+        {"id": "id-1", "title": "Note One"},
+        {"id": "id-2", "title": "Note Two"},
+    ])
+    contents = {
+        "id-1": "# Note One\n\nSee [[Note Two/Some Heading]].\n",
+        "id-2": "# Note Two\n\nNo outgoing links.\n",
+    }
+
+    def fake_bearcli(*args, **kwargs):
+        if args[0] == "list":
+            return notes_json
+        if args[0] == "cat":
+            return contents[args[1]]
+        raise AssertionError(f"unexpected bearcli call: {args}")
+
+    orig_bearcli = bear_lint.bearcli
+    bear_lint.bearcli = fake_bearcli
+
+    import io
+    from contextlib import redirect_stderr
+
+    buf = io.StringIO()
+    sections = []
+    try:
+        with redirect_stderr(buf):
+            bear_lint.lint_orphans(sections=sections)
+    finally:
+        bear_lint.bearcli = orig_bearcli
+
+    output = buf.getvalue()
+    assert "[[Note Two]]" not in output, output
+    assert "1 orphan(s) found" in output, output
 
 
 IDEMPOTENCY_FIXTURES = [

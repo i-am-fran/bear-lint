@@ -25,7 +25,7 @@ import sys
 from dataclasses import dataclass, field
 from datetime import datetime
 
-__version__ = "1.7.0"
+__version__ = "1.7.1"
 
 BEARCLI_FALLBACK = "/Applications/Bear.app/Contents/MacOS/bearcli"
 
@@ -998,15 +998,17 @@ def lint_all(query=None, sections=None, dry_run=False, yes=False, by_tag=False):
         sections.append(f"---\n\n**{checked} notes checked, {fixed_count} {verb}.**")
 
 
-def extract_wikilink_targets(lines, mask):
+def extract_wikilink_targets(lines, mask, titles):
     targets = set()
     for idx, line in enumerate(lines):
         if idx < len(mask) and mask[idx]:
             continue
         for m in CLEAN_WIKILINK_RE.finditer(line):
-            target = m.group(1).strip()
-            if target:
-                targets.add(target)
+            raw = m.group(1).strip()
+            if not raw:
+                continue
+            target = _wiki_logical_target(raw, titles)
+            targets.add(_wiki_note_title(target, titles))
     return targets
 
 
@@ -1034,6 +1036,28 @@ def _wiki_logical_target(raw_target, titles):
     return raw_target
 
 
+def _wiki_note_title(target, titles):
+    """Resolve a [[wikilink]] target to the note-title portion, recognizing
+    Bear's native compound syntax: `Note/Heading` (heading link) and
+    `Note|Alias` (alias link, display text only) - which may combine as
+    `Note/Heading|Alias`. Precedence, to disambiguate from a literal note
+    title that happens to contain "/" or "|": the whole string is checked
+    against real titles first (exact match wins outright); only if that
+    fails is the alias suffix (from the first "|") stripped and re-checked;
+    only if that still doesn't match is the heading suffix (from the first
+    "/" in what's left) also stripped. The result is returned whether or
+    not it matches - the caller decides "valid compound link" vs. "still
+    dangling" by checking `in titles`. Always returns a prefix of `target`,
+    so `target[len(result):]` recovers whatever heading/alias text was
+    stripped, for reconstructing display strings."""
+    if target in titles:
+        return target
+    without_alias = target.split("|", 1)[0]
+    if without_alias != target and without_alias in titles:
+        return without_alias
+    return without_alias.split("/", 1)[0]
+
+
 def check_dangling_wikilinks(lines, mask, titles, titles_by_lower, found):
     for idx, line in enumerate(lines, start=1):
         if idx - 1 < len(mask) and mask[idx - 1]:
@@ -1043,9 +1067,13 @@ def check_dangling_wikilinks(lines, mask, titles, titles_by_lower, found):
             if not raw:
                 continue
             target = _wiki_logical_target(raw, titles)
-            if target in titles:
+            note_title = _wiki_note_title(target, titles)
+            if note_title in titles:
                 continue
-            found.append(WikiTarget(target, find_typo_suggestion(target, titles, titles_by_lower)))
+            suggestion = find_typo_suggestion(note_title, titles, titles_by_lower)
+            if suggestion:
+                suggestion = f"{suggestion}{target[len(note_title):]}"
+            found.append(WikiTarget(target, suggestion))
 
 
 def mark_dangling_wikilinks(lines, mask, titles, titles_by_lower):
@@ -1068,7 +1096,8 @@ def mark_dangling_wikilinks(lines, mask, titles, titles_by_lower):
             if not raw:
                 return m.group(0)
             target = _wiki_logical_target(raw, titles)
-            if target in titles or find_typo_suggestion(target, titles, titles_by_lower):
+            note_title = _wiki_note_title(target, titles)
+            if note_title in titles or find_typo_suggestion(note_title, titles, titles_by_lower):
                 desired = target
             else:
                 desired = f"{target}{MARK_SUFFIX}"
@@ -1233,7 +1262,7 @@ def lint_orphans(sections=None, by_tag=False):
         content = content.replace("\r\n", "\n").replace("\r", "\n")
         lines = content.split("\n")
         mask = protected_mask(lines)
-        linked_titles.update(extract_wikilink_targets(lines, mask))
+        linked_titles.update(extract_wikilink_targets(lines, mask, candidate_titles))
 
     orphans = sorted(candidate_titles - linked_titles)
 
