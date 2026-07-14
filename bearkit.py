@@ -1,23 +1,24 @@
 #!/usr/bin/env python3
 """
-bear_lint.py - Markdown lint/fix for Bear notes.
+bearkit.py - Markdown linter and Bear-notes companion tool.
 
 USAGE
-  bear_lint.py <note-id> [-o] [-n]        # lint one note by ID, optionally save a report note / dry-run
-  bear_lint.py --all|-a [-o] [-n] [-y]    # lint all notes (prompts for confirmation unless -y/-n)
-  bear_lint.py --all|-a "#tag" [-o] [-n] [-y]   # lint notes matching a Bear search query
-  bear_lint.py --wiki|-w [-o]             # vault-wide: report dangling [[wikilinks]]
-  bear_lint.py --wiki|-w --mark [-y|-n]   # ...and mark them in the note itself (" +")
-  bear_lint.py --orphans [-o]             # vault-wide: report notes with no incoming [[wikilinks]]
-  bear_lint.py <note-id>|--all|--wiki|--orphans -o -t   # group the -o report by tag (H2 tag, H3 note title)
-  bear_lint.py --selftest                 # sanity check, no Bear needed
-  bear_lint.py --version|-v               # print version
+  bearkit orphans [-t tag]                   list notes with no incoming [[wikilinks]]
+  bearkit duplicates [-t tag]                list notes that share the same title
+  bearkit wikilinks [-t tag]                 list dangling [[wikilinks]]
+  bearkit wikilinks --mark [-t tag] [-n|-y]  ...and mark them in the note itself (" +")
+  bearkit lint [-t tag] [-n] [-y]            lint all/tagged notes (asks for confirmation)
+  bearkit lint -i <note-id> [-n]             lint a single note (no confirmation)
+  bearkit random [count] [-t tag]            open one or more random notes in Bear
+  bearkit --selftest                         sanity check, no Bear needed
+  bearkit --version|-v                       print version
 """
 
 import argparse
 import difflib
 import json
 import os
+import random
 import re
 import shutil
 import subprocess
@@ -25,7 +26,7 @@ import sys
 from dataclasses import dataclass, field
 from datetime import datetime
 
-__version__ = "1.7.1"
+__version__ = "2.0.0"
 
 BEARCLI_FALLBACK = "/Applications/Bear.app/Contents/MacOS/bearcli"
 
@@ -729,6 +730,18 @@ def render_orphans_section(titles):
     return f"{heading}\n\n{body}"
 
 
+def render_duplicates_section(title, notes):
+    # [[Title]] wikilinks can't disambiguate between duplicates, so each
+    # note renders as a clickable bear:// link instead, with its tags as a
+    # disambiguating suffix.
+    heading = f"## {title} ({len(notes)} notes)"
+    lines = []
+    for n in notes:
+        tag_suffix = f" — {', '.join(n.get('tags', []))}" if n.get("tags") else ""
+        lines.append(f"- [Open `{n['id']}`](bear://x-callback-url/open-note?id={n['id']}){tag_suffix}")
+    return f"{heading}\n\n" + "\n".join(lines)
+
+
 def _note_report_item(title, note_id, issues, tags, by_tag, fixed=None, skipped_reason=None, dry_run=False):
     if by_tag:
         body = render_note_body(issues, fixed=fixed, skipped_reason=skipped_reason, dry_run=dry_run)
@@ -819,7 +832,7 @@ def bearcli(*args, stdin=None, timeout=30):
             _bearcli_path = BEARCLI_FALLBACK
         else:
             sys.exit(
-                "bear_lint: bearcli not found.\n"
+                "bearkit: bearcli not found.\n"
                 "Install Bear 2.8 or later: https://bear.app"
             )
     try:
@@ -837,20 +850,62 @@ def bearcli(*args, stdin=None, timeout=30):
     return result.stdout
 
 
+def list_notes():
+    """Fetch every note's id/title/tags via bearcli. Exits the process on
+    any bearcli or JSON error, matching every call site's prior ad hoc
+    handling."""
+    try:
+        out = bearcli("list", "--format", "json", "--fields", "id,title,tags")
+    except BearcliError as e:
+        sys.exit(f"bearkit: {e}")
+    try:
+        return json.loads(out)
+    except json.JSONDecodeError as e:
+        sys.exit(f"bearkit: could not parse bearcli output: {e}\nRaw output: {out[:200]!r}")
+
+
+def tag_matches(tags, tag):
+    """True if a note's tags include <tag>, recognizing that bearcli's
+    `list` output already expands nested tags into separate entries (a note
+    tagged only #people/authors also carries a plain #people entry), so a
+    scope of -t people also matches notes only tagged with a child tag."""
+    normalized = tag[1:] if tag.startswith("#") else tag
+    return f"#{normalized}" in tags
+
+
+BEARKIT_LISTS_TAG = "bearkit/lists"
+BEARKIT_EDITS_TAG = "bearkit/edits"
+BEARKIT_TAG_PREFIX = "#bearkit/"
+
+
+def has_bearkit_report_tag(tags):
+    """True if any of a note's tags falls under the #bearkit/* namespace
+    (#bearkit/lists or #bearkit/edits) - bearkit's own summary notes, which
+    must never be scanned as sources or flagged as findings, or the tool
+    would start reporting on its own output."""
+    return any(t.startswith(BEARKIT_TAG_PREFIX) for t in tags)
+
+
+def confirm(prompt):
+    answer = input(f"{prompt} [y/N] ")
+    return answer.strip().lower() == "y"
+
+
 LINT_REPORT_DESCRIPTION = "Per-note lint results — auto-fixed issues and issues left for manual review."
 WIKI_REPORT_DESCRIPTION = "Notes containing `[[wikilinks]]` that don't match any existing note title."
 ORPHANS_REPORT_DESCRIPTION = "Notes that no other note links to via [[wikilinks]]."
+DUPLICATES_REPORT_DESCRIPTION = "Notes that share the same title with at least one other note."
 
 
-def write_report_note(sections, title_prefix="Bear Lint Report", description=LINT_REPORT_DESCRIPTION, by_tag=False):
+def write_report_note(sections, title_prefix, description, tag, group_by_tag=False):
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M")
     title = f"{title_prefix} — {timestamp}"
-    body_content = render_grouped_sections(sections) if by_tag else "\n\n".join(sections)
+    body_content = render_grouped_sections(sections) if group_by_tag else "\n\n".join(sections)
     body = f"{description}\n\n{body_content}\n"
     try:
-        bearcli("create", title, "--tags", "bear-lint", stdin=body)
+        bearcli("create", title, "--tags", tag, stdin=body)
     except BearcliError as e:
-        print(f"bear_lint: could not create report note: {e}", file=sys.stderr)
+        print(f"bearkit: could not create report note: {e}", file=sys.stderr)
         return
     print(f"Report note created: {title}", file=sys.stderr)
 
@@ -912,7 +967,7 @@ def lint_one(note_id, sections=None, dry_run=False, by_tag=False):
     try:
         bearcli("overwrite", note_id, "--no-update-modified", stdin=fixed)
     except BearcliError as e:
-        sys.exit(f"bear_lint: could not write note: {e}")
+        sys.exit(f"bearkit: could not write note: {e}")
 
     print(f"{label}:", file=sys.stderr)
     print_report(issues)
@@ -920,27 +975,18 @@ def lint_one(note_id, sections=None, dry_run=False, by_tag=False):
         sections.append(_note_report_item(title, note_id, issues, tags, by_tag, fixed=True))
 
 
-def lint_all(query=None, sections=None, dry_run=False, yes=False, by_tag=False):
-    try:
-        if query:
-            out = bearcli("search", query, "--format", "json", "--fields", "id,title,tags")
-        else:
-            out = bearcli("list", "--format", "json", "--fields", "id,title,tags")
-    except BearcliError as e:
-        sys.exit(f"bear_lint: {e}")
-
-    try:
-        notes = json.loads(out)
-    except json.JSONDecodeError as e:
-        sys.exit(f"bear_lint: could not parse bearcli output: {e}\nRaw output: {out[:200]!r}")
+def lint_all(tag=None, sections=None, dry_run=False, yes=False, by_tag=False):
+    notes = list_notes()
+    notes = [n for n in notes if not has_bearkit_report_tag(n.get("tags", []))]
+    if tag:
+        notes = [n for n in notes if tag_matches(n.get("tags", []), tag)]
 
     if not notes:
         print("No notes found.", file=sys.stderr)
         return
 
     if not yes and not dry_run:
-        answer = input(f"About to lint {len(notes)} notes — continue? [y/N] ")
-        if answer.strip().lower() != "y":
+        if not confirm(f"About to lint {len(notes)} notes — continue?"):
             print("Aborted.", file=sys.stderr)
             return
 
@@ -1116,29 +1162,26 @@ def mark_dangling_wikilinks(lines, mask, titles, titles_by_lower):
     return new_lines, marked, unmarked
 
 
-def lint_wiki(sections=None, by_tag=False, mark=False, dry_run=False, yes=False):
-    try:
-        out = bearcli("list", "--format", "json", "--fields", "id,title,tags")
-    except BearcliError as e:
-        sys.exit(f"bear_lint: {e}")
+def check_wikilinks(sections=None, by_tag=False, mark=False, dry_run=False, yes=False, tag=None):
+    all_notes = list_notes()
+    # Target-title resolution always considers the whole vault, even when
+    # -t/tag scopes which notes are scanned as sources - a scoped note can
+    # still legitimately link to something outside its tag.
+    titles = {note["title"] for note in all_notes}
+    titles_by_lower = {t.lower(): t for t in titles}
 
-    try:
-        notes = json.loads(out)
-    except json.JSONDecodeError as e:
-        sys.exit(f"bear_lint: could not parse bearcli output: {e}\nRaw output: {out[:200]!r}")
+    notes = [n for n in all_notes if not has_bearkit_report_tag(n.get("tags", []))]
+    if tag:
+        notes = [n for n in notes if tag_matches(n.get("tags", []), tag)]
 
     if not notes:
         print("No notes found.", file=sys.stderr)
         return
 
     if mark and not yes and not dry_run:
-        answer = input(f"About to mark dangling wikilinks in {len(notes)} notes — continue? [y/N] ")
-        if answer.strip().lower() != "y":
+        if not confirm(f"About to mark dangling wikilinks in {len(notes)} notes — continue?"):
             print("Aborted.", file=sys.stderr)
             return
-
-    titles = {note["title"] for note in notes}
-    titles_by_lower = {t.lower(): t for t in titles}
 
     checked = 0
     flagged_notes = 0
@@ -1147,12 +1190,6 @@ def lint_wiki(sections=None, by_tag=False, mark=False, dry_run=False, yes=False)
     total_unmarked = 0
 
     for note in notes:
-        # bear-lint's own report notes (#bear-lint) contain real, unescaped
-        # [[wikilinks]] to nonexistent notes by design (see render_wiki_section) -
-        # scanning them here would recursively flag each report as dangling.
-        if "#bear-lint" in note.get("tags", []):
-            continue
-
         note_id = note["id"]
         title = note["title"]
         tags = note.get("tags", [])
@@ -1225,31 +1262,28 @@ def lint_wiki(sections=None, by_tag=False, mark=False, dry_run=False, yes=False)
         sections.append(f"---\n\n**{summary}**")
 
 
-def lint_orphans(sections=None, by_tag=False):
-    try:
-        out = bearcli("list", "--format", "json", "--fields", "id,title,tags")
-    except BearcliError as e:
-        sys.exit(f"bear_lint: {e}")
-
-    try:
-        notes = json.loads(out)
-    except json.JSONDecodeError as e:
-        sys.exit(f"bear_lint: could not parse bearcli output: {e}\nRaw output: {out[:200]!r}")
-
-    if not notes:
+def find_orphans(sections=None, by_tag=False, tag=None):
+    all_notes = list_notes()
+    if not all_notes:
         print("No notes found.", file=sys.stderr)
         return
 
-    # bear-lint's own report notes (#bear-lint) are excluded from orphan
+    # bearkit's own report notes (#bearkit/*) are excluded from orphan
     # candidates too - nothing ever links back to a timestamped report, so
     # they'd be flagged as an orphan on every single run.
-    candidates = [note for note in notes if "#bear-lint" not in note.get("tags", [])]
-    candidate_titles = {note["title"] for note in candidates}
+    scannable = [note for note in all_notes if not has_bearkit_report_tag(note.get("tags", []))]
+    all_titles = {n["title"] for n in scannable}
+
+    # -t/tag only narrows which titles are reportable as orphans - the
+    # incoming-link scan always covers the whole (non-report) vault, since a
+    # note outside the tag scope can still legitimately link to one inside it.
+    candidates = [n for n in scannable if tag_matches(n.get("tags", []), tag)] if tag else scannable
+    candidate_titles = {n["title"] for n in candidates}
 
     linked_titles = set()
     checked = 0
 
-    for note in candidates:
+    for note in scannable:
         note_id = note["id"]
         title = note["title"]
         try:
@@ -1262,7 +1296,7 @@ def lint_orphans(sections=None, by_tag=False):
         content = content.replace("\r\n", "\n").replace("\r", "\n")
         lines = content.split("\n")
         mask = protected_mask(lines)
-        linked_titles.update(extract_wikilink_targets(lines, mask, candidate_titles))
+        linked_titles.update(extract_wikilink_targets(lines, mask, all_titles))
 
     orphans = sorted(candidate_titles - linked_titles)
 
@@ -1283,97 +1317,130 @@ def lint_orphans(sections=None, by_tag=False):
         sections.append(f"---\n\n**{checked} notes checked, {len(orphans)} orphan(s) found.**")
 
 
+def find_duplicates(sections=None, tag=None):
+    notes = list_notes()
+    notes = [n for n in notes if not has_bearkit_report_tag(n.get("tags", []))]
+    if tag:
+        notes = [n for n in notes if tag_matches(n.get("tags", []), tag)]
+
+    if not notes:
+        print("No notes found.", file=sys.stderr)
+        return
+
+    by_title = {}
+    for n in notes:
+        by_title.setdefault(n["title"], []).append(n)
+    duplicate_groups = {t: ns for t, ns in by_title.items() if len(ns) > 1}
+
+    checked = len(notes)
+    print(f"\n{len(duplicate_groups)} duplicate title(s) found among {checked} note(s) checked:", file=sys.stderr)
+    for title, ns in sorted(duplicate_groups.items()):
+        print(f"  \"{title}\" — {len(ns)} notes: {', '.join(n['id'] for n in ns)}", file=sys.stderr)
+
+    if sections is not None:
+        for title, ns in sorted(duplicate_groups.items()):
+            sections.append(render_duplicates_section(title, ns))
+        sections.append(f"---\n\n**{checked} notes checked, {len(duplicate_groups)} duplicate title(s) found.**")
+
+
+def open_random(count=1, tag=None):
+    notes = list_notes()
+    notes = [n for n in notes if not has_bearkit_report_tag(n.get("tags", []))]
+    if tag:
+        notes = [n for n in notes if tag_matches(n.get("tags", []), tag)]
+
+    if not notes:
+        print("No notes found.", file=sys.stderr)
+        return
+
+    for note in random.sample(notes, min(count, len(notes))):
+        try:
+            bearcli("open", note["id"])
+        except BearcliError as e:
+            print(f"{note['title']}: could not open ({e})", file=sys.stderr)
+            continue
+        print(f"Opened: {note['title']} ({note['id']})", file=sys.stderr)
+
+
 HELP = """\
-bear-lint — Markdown linter and fixer for Bear notes
+bearkit — a companion tool for Bear notes
 
 USAGE
-  bear-lint <note-id> [options]        Lint one note by ID.
-  bear-lint --all|-a [query] [options] Lint all notes, or only notes matching
-                                        a Bear search query. Always asks for
-                                        confirmation first unless -y or -n
-                                        is given.
-  bear-lint --wiki|-w [-o]             Vault-wide: report [[wikilinks]] whose
-                                        target note title doesn't exist.
-                                        Standalone mode - can't be combined
-                                        with a note ID or --all; --dry-run
-                                        and --yes require --mark.
-  bear-lint --wiki --mark [-y|-n]      ...and mark each one in the note
+  bearkit orphans [options]            List notes with no incoming
+                                        [[wikilinks]].
+  bearkit duplicates [options]         List notes that share the same title.
+  bearkit wikilinks [options]          List [[wikilinks]] whose target note
+                                        doesn't exist.
+  bearkit wikilinks --mark [options]   ...and mark each one in the note
                                         itself by appending " +", e.g.
-                                        [[Wikilink]] -> [[Wikilink +]], so
-                                        it's visible right in Bear. Marks
+                                        [[Wikilink]] -> [[Wikilink +]]. Marks
                                         are self-healing: once a target note
-                                        exists, its " +" is stripped back
-                                        off on the next run. Prompts for
+                                        exists, the " +" is stripped back off
+                                        on the next run. Asks for
                                         confirmation unless -y; -n previews
                                         the diff without writing.
-  bear-lint --orphans [-o]             Vault-wide: report notes that no
-                                        other note links to via
-                                        [[wikilinks]]. Standalone mode -
-                                        can't be combined with a note ID,
-                                        --all, --dry-run, --yes, or --wiki.
-  bear-lint --selftest                 Run all rules against a built-in
-                                        sample note. Doesn't touch Bear.
-  bear-lint --version|-v               Print the installed version.
-  bear-lint --help|-h                  Show this message.
+  bearkit lint [options]               Lint all notes, or notes matching -t.
+                                        Asks for confirmation unless -y or -n.
+  bearkit lint -i <note-id> [options]  Lint a single note by ID. Never asks
+                                        for confirmation.
+  bearkit random [count] [options]     Open one or more random notes in Bear
+                                        (1-9, default 1).
+  bearkit --selftest                   Run all lint rules against a
+                                        built-in sample note. Doesn't touch
+                                        Bear.
+  bearkit --version|-v                 Print the installed version.
+  bearkit --help|-h                    Show this message.
+
+ACTIONS
+  Lists (orphans, duplicates, wikilinks) never change your notes, and
+  automatically save their report as a new Bear note tagged #bearkit/lists.
+
+  Edits (lint, wikilinks --mark) change your notes, and automatically save a
+  summary as a new Bear note tagged #bearkit/edits - unless run with
+  --dry-run, since nothing was actually changed. They ask for confirmation
+  first unless -y/--yes is given.
+
+  Open (random) opens notes in the Bear app and never creates a summary note.
+
+  Every action excludes bearkit's own #bearkit/lists and #bearkit/edits
+  report notes from its scans, so past reports never show up as orphans,
+  duplicates, or lint/wikilink findings.
 
 OPTIONS
-  -o, --output   Also save the report as a new Bear note (tagged #bear-lint,
-                 titled "Bear Lint Report — <timestamp>"). A one-line
-                 description sits below the title, explaining what the note
-                 contains. The body is Markdown: each linted note links back
-                 via a "[[wikilink]]" heading, issues render as GitHub-style
-                 callouts ("> [!WARNING]" / "> [!TIP]"), and auto-fixed ones
-                 as plain bullets. Skipped if there's nothing to report (e.g.
-                 the run was aborted or nothing matched the query). With
-                 --wiki, the note is titled "Bear Wikilinks Report —
-                 <timestamp>" instead, with its own description, and each
-                 section is a plain, clickable list of the dangling
-                 "[[wikilinks]]" found - no callouts, note IDs, or line
-                 numbers. With --orphans, the note is titled "Bear Orphans
-                 Report — <timestamp>" instead, with a single section
-                 listing every orphaned note as a plain, clickable
-                 "[[wikilink]]" bullet.
-  --mark         With --wiki, mark each dangling wikilink in the note
-                 itself by appending " +" (e.g. "[[Wikilink]]" becomes
-                 "[[Wikilink +]]"), instead of only reporting it. Targets
-                 with a likely typo suggestion are left unmarked. Marking
-                 is idempotent and self-healing: once a target note exists,
-                 a previously added " +" is stripped back off on a later
-                 run. Requires --wiki, and enables --dry-run/-n and
-                 -y/--yes for --wiki the same way --all uses them
-                 (confirmation prompt unless -y, diff preview instead of
-                 writing with -n).
-  -t, --by-tag   Group the -o report note by Bear tag instead of the default
-                 flat list: each tag gets an H2 heading, each note under it
-                 gets an H3. A note with multiple tags appears once under
-                 each of its tags; untagged notes are grouped under an
-                 "Untagged" H2. Requires -o/--output. Exception: --orphans
-                 reports have no per-note body worth heading, so grouped
-                 orphan output is a plain "- [[wikilink]]" bullet list under
-                 each tag's H2 instead of one H3 per note.
-  -n, --dry-run  Show what would change without writing anything back to
-                 Bear. Prints a unified diff per note instead of overwriting
-                 it. Implies skipping the --all confirmation prompt, since
-                 nothing destructive happens.
-  -y, --yes      Skip the --all confirmation prompt (for cron/launchd or
-                 other non-interactive use).
+  -t, --tag <tagName>  Scope to notes tagged <tagName> (and its nested
+                       tags, e.g. -t people also matches #people/authors).
+                       Available on every action.
+  -i, --id <noteID>    Lint a single note by ID instead of a tag/vault-wide
+                       scan. Only on lint; mutually exclusive with -t.
+                       Skips the confirmation prompt.
+  --mark               With wikilinks, mark each dangling wikilink in the
+                       note itself instead of only reporting it. Targets
+                       with a likely typo suggestion are left unmarked.
+  --group-by-tag       Reorganize the summary note by Bear tag instead of a
+                       flat list: each tag gets an H2 heading, each note
+                       under it an H3. A note with multiple tags appears
+                       once per tag; untagged notes group under
+                       "Untagged". Available on orphans, wikilinks, lint.
+  -n, --dry-run        Preview an edit action as a unified diff per note,
+                       without writing anything back to Bear or creating a
+                       summary note. Available on lint, wikilinks --mark.
+  -y, --yes            Skip the confirmation prompt for an edit action
+                       (cron/launchd-friendly). Available on lint,
+                       wikilinks --mark.
 
 EXAMPLES
-  bear-lint <note-id>          Lint a single note.
-  bear-lint <note-id> -n       ...preview the diff without writing it.
-  bear-lint <note-id> -o       ...and save the report as a note.
-  bear-lint --all "#work"      Lint every note tagged #work (asks to confirm).
-  bear-lint --all "#work" -y   ...same, but skip the confirmation prompt.
-  bear-lint -a -n              Preview every note's changes without writing.
-  bear-lint --wiki             Report [[wikilinks]] with no matching note.
-  bear-lint --wiki -o          ...and save the report as a note.
-  bear-lint --wiki --mark      Mark dangling [[wikilinks]] in place (asks to confirm).
-  bear-lint --wiki --mark -y   ...same, but skip the confirmation prompt.
-  bear-lint --wiki --mark -n   Preview which notes would be marked, without writing.
-  bear-lint --orphans          Report notes with no incoming [[wikilinks]].
-  bear-lint --orphans -o       ...and save the report as a note.
-  bear-lint --all -o -t        Save the report grouped by tag (H2 tag, H3 note).
-  bear-lint --selftest         Dry-run against the bundled sample note.
+  bearkit orphans
+  bearkit orphans -t work
+  bearkit duplicates
+  bearkit wikilinks
+  bearkit wikilinks --mark
+  bearkit wikilinks --mark -t evergreen -y
+  bearkit lint
+  bearkit lint -t work -n
+  bearkit lint -i 6F98051A-0000-1111-2222-9444C3615B10
+  bearkit random
+  bearkit random 4 -t evergreen
+  bearkit --selftest
 
 GETTING A NOTE ID
   bearcli list --fields id,title
@@ -1385,106 +1452,114 @@ OUTPUT
     "N issue(s) found (manual attention needed)" flagged only, note left as-is
     "N issue(s) would be fixed (dry run)"        auto-fixable, but -n/--dry-run given
 
-  See the README for which rules auto-fix vs. report-only.
+  See the README for which lint rules auto-fix vs. report-only.
 
 REQUIRES
   Bear 2.8+
 """
 
+REPORT_META = {
+    "orphans": ("BearKit Orphans Report", ORPHANS_REPORT_DESCRIPTION),
+    "duplicates": ("BearKit Duplicates Report", DUPLICATES_REPORT_DESCRIPTION),
+    "wikilinks": ("BearKit Wikilinks Report", WIKI_REPORT_DESCRIPTION),
+    "lint": ("BearKit Lint Report", LINT_REPORT_DESCRIPTION),
+}
+
 
 def build_arg_parser():
-    parser = argparse.ArgumentParser(prog="bear-lint", add_help=False)
-    parser.add_argument("-o", "--output", action="store_true")
-    parser.add_argument("-n", "--dry-run", action="store_true")
-    parser.add_argument("-y", "--yes", action="store_true")
-    parser.add_argument("-a", "--all", action="store_true")
-    parser.add_argument("-w", "--wiki", action="store_true")
-    parser.add_argument("--orphans", action="store_true")
-    parser.add_argument("--mark", action="store_true")
-    parser.add_argument("-t", "--by-tag", action="store_true")
-    parser.add_argument("target", nargs="?", default=None)
+    parser = argparse.ArgumentParser(prog="bearkit", add_help=False)
+    sub = parser.add_subparsers(dest="command", required=True)
+
+    p_orphans = sub.add_parser("orphans", add_help=False)
+    p_orphans.add_argument("-t", "--tag", default=None)
+    p_orphans.add_argument("--group-by-tag", action="store_true")
+
+    p_duplicates = sub.add_parser("duplicates", add_help=False)
+    p_duplicates.add_argument("-t", "--tag", default=None)
+
+    p_wikilinks = sub.add_parser("wikilinks", add_help=False)
+    p_wikilinks.add_argument("-t", "--tag", default=None)
+    p_wikilinks.add_argument("--mark", action="store_true")
+    p_wikilinks.add_argument("-n", "--dry-run", action="store_true")
+    p_wikilinks.add_argument("-y", "--yes", action="store_true")
+    p_wikilinks.add_argument("--group-by-tag", action="store_true")
+
+    p_lint = sub.add_parser("lint", add_help=False)
+    scope = p_lint.add_mutually_exclusive_group()
+    scope.add_argument("-t", "--tag", default=None)
+    scope.add_argument("-i", "--id", dest="note_id", default=None)
+    p_lint.add_argument("-n", "--dry-run", action="store_true")
+    p_lint.add_argument("-y", "--yes", action="store_true")
+    p_lint.add_argument("--group-by-tag", action="store_true")
+
+    p_random = sub.add_parser("random", add_help=False)
+    p_random.add_argument("count", nargs="?", type=int, default=1, choices=range(1, 10))
+    p_random.add_argument("-t", "--tag", default=None)
+
     return parser
 
 
 def main():
     args = sys.argv[1:]
 
-    # These short-circuit before any note-id/--all parsing applies.
+    # These short-circuit before any subcommand parsing applies.
     if not args or "--help" in args or "-h" in args:
         print(HELP, end="")
         sys.exit(0 if args else 1)
 
     if "--version" in args or "-v" in args:
-        print(f"bear-lint {__version__}")
+        print(f"bearkit {__version__}")
         return
 
     if "--selftest" in args:
         fixed, issues = lint_note(SAMPLE_NOTE)
-        print("=== bear_lint.py selftest ===", file=sys.stderr)
+        print("=== bearkit selftest ===", file=sys.stderr)
         print_report(issues)
         print("\n--- fixed text ---", file=sys.stderr)
         sys.stdout.write(fixed)
         return
 
     parser = build_arg_parser()
-    parsed, unknown = parser.parse_known_args(args)
-    if unknown:
-        sys.exit(f"bear_lint: unrecognised argument(s): {' '.join(unknown)}")
+    parsed = parser.parse_args(args)
 
-    if parsed.wiki and parsed.orphans:
-        sys.exit("bear_lint: --wiki/-w and --orphans cannot be combined with each other")
+    if parsed.command == "wikilinks" and (parsed.dry_run or parsed.yes) and not parsed.mark:
+        sys.exit("bearkit: --dry-run/-n and --yes/-y require --mark")
 
-    if parsed.mark and not parsed.wiki:
-        sys.exit("bear_lint: --mark requires --wiki/-w")
+    is_edit = parsed.command == "lint" or (parsed.command == "wikilinks" and parsed.mark)
+    is_open = parsed.command == "random"
+    dry_run = getattr(parsed, "dry_run", False)
+    by_tag = getattr(parsed, "group_by_tag", False)
 
-    if (parsed.wiki or parsed.orphans) and (parsed.target is not None or parsed.all):
-        sys.exit("bear_lint: --wiki/-w and --orphans cannot be combined with a note ID or --all")
+    sections = None if is_open else []
 
-    if parsed.orphans and (parsed.dry_run or parsed.yes):
-        sys.exit("bear_lint: --orphans cannot be combined with --dry-run or --yes")
-
-    if parsed.wiki and not parsed.mark and (parsed.dry_run or parsed.yes):
-        sys.exit("bear_lint: --wiki/-w requires --mark to use --dry-run or --yes")
-
-    if parsed.by_tag and not parsed.output:
-        sys.exit("bear_lint: --by-tag/-t requires -o/--output")
-
-    output_note = parsed.output
-    dry_run = parsed.dry_run
-    yes = parsed.yes
-    by_tag = parsed.by_tag
-    mark = parsed.mark
-
-    if not parsed.wiki and not parsed.orphans and not parsed.all and parsed.target is None:
-        sys.exit("bear_lint: missing note ID or --all")
-
-    sections = [] if output_note else None
-
-    if parsed.wiki:
-        lint_wiki(sections=sections, by_tag=by_tag, mark=mark, dry_run=dry_run, yes=yes)
-    elif parsed.orphans:
-        lint_orphans(sections=sections, by_tag=by_tag)
-    elif parsed.all:
-        lint_all(parsed.target, sections=sections, dry_run=dry_run, yes=yes, by_tag=by_tag)
-    else:
-        lint_one(parsed.target, sections=sections, dry_run=dry_run, by_tag=by_tag)
-
-    if output_note:
-        if sections:
-            if parsed.wiki:
-                write_report_note(
-                    sections, title_prefix="Bear Wikilinks Report", description=WIKI_REPORT_DESCRIPTION, by_tag=by_tag
-                )
-            elif parsed.orphans:
-                write_report_note(
-                    sections, title_prefix="Bear Orphans Report", description=ORPHANS_REPORT_DESCRIPTION, by_tag=by_tag
-                )
-            else:
-                write_report_note(
-                    sections, title_prefix="Bear Lint Report", description=LINT_REPORT_DESCRIPTION, by_tag=by_tag
-                )
+    if parsed.command == "orphans":
+        find_orphans(sections=sections, by_tag=by_tag, tag=parsed.tag)
+    elif parsed.command == "duplicates":
+        find_duplicates(sections=sections, tag=parsed.tag)
+    elif parsed.command == "wikilinks":
+        check_wikilinks(
+            sections=sections, by_tag=by_tag, mark=parsed.mark, dry_run=parsed.dry_run, yes=parsed.yes, tag=parsed.tag
+        )
+    elif parsed.command == "lint":
+        if parsed.note_id:
+            lint_one(parsed.note_id, sections=sections, dry_run=parsed.dry_run, by_tag=by_tag)
         else:
-            print("bear_lint: nothing to report — no note created.", file=sys.stderr)
+            lint_all(parsed.tag, sections=sections, dry_run=parsed.dry_run, yes=parsed.yes, by_tag=by_tag)
+    elif parsed.command == "random":
+        open_random(count=parsed.count, tag=parsed.tag)
+
+    if is_open:
+        return
+
+    if is_edit and dry_run:
+        return
+
+    if sections:
+        report_tag = BEARKIT_EDITS_TAG if is_edit else BEARKIT_LISTS_TAG
+        title_prefix, description = REPORT_META[parsed.command]
+        write_report_note(sections, title_prefix=title_prefix, description=description, tag=report_tag, group_by_tag=by_tag)
+    else:
+        print("bearkit: nothing to report — no note created.", file=sys.stderr)
 
 
 if __name__ == "__main__":
