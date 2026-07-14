@@ -26,7 +26,7 @@ import sys
 from dataclasses import dataclass, field
 from datetime import datetime
 
-__version__ = "2.0.0"
+__version__ = "2.0.1"
 
 BEARCLI_FALLBACK = "/Applications/Bear.app/Contents/MacOS/bearcli"
 
@@ -852,6 +852,19 @@ def bearcli(*args, stdin=None, timeout=30):
     return result.stdout
 
 
+def cat_note(note_id):
+    """Fetch a note's raw content plus its optimistic-concurrency hash via
+    `cat --format json`, so a caller that may later overwrite the note can
+    pass the hash back as `--base` and let bearcli reject the write if the
+    note changed (e.g. a live edit in the Bear app) since this read."""
+    out = bearcli("cat", note_id, "--format", "json")
+    try:
+        data = json.loads(out)
+    except json.JSONDecodeError as e:
+        raise BearcliError(f"could not parse cat output: {e}") from e
+    return data["content"], data["hash"]
+
+
 def list_notes():
     """Fetch every note's id/title/tags via bearcli. Exits the process on
     any bearcli or JSON error, matching every call site's prior ad hoc
@@ -937,7 +950,7 @@ def lint_one(note_id, sections=None, dry_run=False, by_tag=False):
             tags = info.get("tags", [])
         else:
             title = bearcli("show", note_id, "--fields", "title").strip()
-        content = bearcli("cat", note_id)
+        content, note_hash = cat_note(note_id)
     except (BearcliError, json.JSONDecodeError) as e:
         print(f"{note_id}: skipped ({e})", file=sys.stderr)
         if sections is not None:
@@ -967,7 +980,7 @@ def lint_one(note_id, sections=None, dry_run=False, by_tag=False):
         return
 
     try:
-        bearcli("overwrite", note_id, "--no-update-modified", stdin=fixed)
+        bearcli("overwrite", note_id, "--base", note_hash, "--no-update-modified", stdin=fixed)
     except BearcliError as e:
         sys.exit(f"bearkit: could not write note: {e}")
 
@@ -1000,7 +1013,7 @@ def lint_all(tag=None, sections=None, dry_run=False, yes=False, by_tag=False):
         title = note["title"]
         tags = note.get("tags", [])
         try:
-            content = bearcli("cat", note_id)
+            content, note_hash = cat_note(note_id)
         except BearcliError as e:
             print(f"{title}: skipped ({e})", file=sys.stderr)
             if sections is not None:
@@ -1029,7 +1042,7 @@ def lint_all(tag=None, sections=None, dry_run=False, yes=False, by_tag=False):
             continue
 
         try:
-            bearcli("overwrite", note_id, "--no-update-modified", stdin=fixed)
+            bearcli("overwrite", note_id, "--base", note_hash, "--no-update-modified", stdin=fixed)
         except BearcliError as e:
             print(f"{title}: could not write ({e})", file=sys.stderr)
             continue
@@ -1196,7 +1209,7 @@ def check_wikilinks(sections=None, by_tag=False, mark=False, dry_run=False, yes=
         title = note["title"]
         tags = note.get("tags", [])
         try:
-            content = bearcli("cat", note_id)
+            content, note_hash = cat_note(note_id)
         except BearcliError as e:
             print(f"{title}: skipped ({e})", file=sys.stderr)
             continue
@@ -1221,7 +1234,7 @@ def check_wikilinks(sections=None, by_tag=False, mark=False, dry_run=False, yes=
                     print_dry_run_diff(content, new_content, label)
                 else:
                     try:
-                        bearcli("overwrite", note_id, "--no-update-modified", stdin=new_content)
+                        bearcli("overwrite", note_id, "--base", note_hash, "--no-update-modified", stdin=new_content)
                     except BearcliError as e:
                         print(f"{title}: could not write ({e})", file=sys.stderr)
                         continue

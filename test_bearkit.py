@@ -20,6 +20,11 @@ def rules(issues):
     return {i.rule for i in issues}
 
 
+def _cat_json(content, note_hash="test-hash"):
+    """Shape a fake `cat --format json` response for cat_note() to parse."""
+    return json.dumps({"content": content, "hash": note_hash})
+
+
 def test_bullet_marker():
     fixed, issues = lint_note("# Title\n\n* item one\n")
     assert "- item one" in fixed, fixed
@@ -575,7 +580,7 @@ def test_lint_one_by_tag_fetches_and_threads_tags():
         if args[0] == "show":
             return json.dumps({"title": "My Note", "tags": ["#work"]})
         if args[0] == "cat":
-            return "# My Note\n\nBody.\n"
+            return _cat_json("# My Note\n\nBody.\n")
         raise AssertionError(f"unexpected bearcli call: {args}")
 
     orig_bearcli = bearkit.bearcli
@@ -601,7 +606,7 @@ def test_lint_one_lints_a_bearkit_tagged_note_when_id_given_explicitly():
         if args[0] == "show":
             return "My Report"
         if args[0] == "cat":
-            return "# My Report\n\n* stray bullet\n"
+            return _cat_json("# My Report\n\n* stray bullet\n")
         if args[0] == "overwrite":
             return ""
         raise AssertionError(f"unexpected bearcli call: {args}")
@@ -617,6 +622,34 @@ def test_lint_one_lints_a_bearkit_tagged_note_when_id_given_explicitly():
     assert len(sections) == 1, sections
 
 
+def test_lint_one_passes_cat_hash_as_overwrite_base():
+    # cat's hash is the only way to detect a concurrent edit made in the Bear
+    # app between the read and the write - overwrite must be conditioned on
+    # it via --base, or a fix can silently clobber the user's live edit.
+    captured = {}
+
+    def fake_bearcli(*args, **kwargs):
+        if args[0] == "show":
+            return "My Note"
+        if args[0] == "cat":
+            return json.dumps({"content": "# My Note\n\n* stray bullet\n", "hash": "hash-abc123"})
+        if args[0] == "overwrite":
+            captured["args"] = args
+            return ""
+        raise AssertionError(f"unexpected bearcli call: {args}")
+
+    orig_bearcli = bearkit.bearcli
+    bearkit.bearcli = fake_bearcli
+    try:
+        lint_one("some-note-id")
+    finally:
+        bearkit.bearcli = orig_bearcli
+
+    args = captured["args"]
+    assert "--base" in args, args
+    assert args[args.index("--base") + 1] == "hash-abc123", args
+
+
 def test_lint_all_excludes_bearkit_tagged_notes():
     notes_json = json.dumps([
         {"id": "id-1", "title": "Note One", "tags": []},
@@ -629,7 +662,7 @@ def test_lint_all_excludes_bearkit_tagged_notes():
         if args[0] == "cat":
             if args[1] == "id-2":
                 raise AssertionError("lint_all should not fetch the body of a #bearkit/edits tagged note")
-            return "# Note One\n\n* stray bullet\n"
+            return _cat_json("# Note One\n\n* stray bullet\n")
         if args[0] == "overwrite":
             return ""
         raise AssertionError(f"unexpected bearcli call: {args}")
@@ -640,6 +673,32 @@ def test_lint_all_excludes_bearkit_tagged_notes():
         bearkit.lint_all(sections=[], yes=True)
     finally:
         bearkit.bearcli = orig_bearcli
+
+
+def test_lint_all_passes_cat_hash_as_overwrite_base():
+    notes_json = json.dumps([{"id": "id-1", "title": "Note One", "tags": []}])
+    captured = {}
+
+    def fake_bearcli(*args, **kwargs):
+        if args[0] == "list":
+            return notes_json
+        if args[0] == "cat":
+            return _cat_json("# Note One\n\n* stray bullet\n", note_hash="hash-xyz")
+        if args[0] == "overwrite":
+            captured["args"] = args
+            return ""
+        raise AssertionError(f"unexpected bearcli call: {args}")
+
+    orig_bearcli = bearkit.bearcli
+    bearkit.bearcli = fake_bearcli
+    try:
+        bearkit.lint_all(sections=[], yes=True)
+    finally:
+        bearkit.bearcli = orig_bearcli
+
+    args = captured["args"]
+    assert "--base" in args, args
+    assert args[args.index("--base") + 1] == "hash-xyz", args
 
 
 def test_lint_all_scoped_by_tag():
@@ -654,7 +713,7 @@ def test_lint_all_scoped_by_tag():
         if args[0] == "cat":
             if args[1] == "id-2":
                 raise AssertionError("lint_all(tag=...) should not fetch notes outside the tag scope")
-            return "# Work Note\n\nAll good.\n"
+            return _cat_json("# Work Note\n\nAll good.\n")
         raise AssertionError(f"unexpected bearcli call: {args}")
 
     orig_bearcli = bearkit.bearcli
@@ -680,7 +739,7 @@ def test_check_wikilinks_scoped_by_tag_still_resolves_targets_vault_wide():
         if args[0] == "cat":
             if args[1] == "id-2":
                 raise AssertionError("check_wikilinks(tag=...) should not fetch notes outside the tag scope")
-            return contents[args[1]]
+            return _cat_json(contents[args[1]])
         raise AssertionError(f"unexpected bearcli call: {args}")
 
     orig_bearcli = bearkit.bearcli
@@ -801,7 +860,7 @@ def test_lint_wiki_reports_dangling_links():
         if args[0] == "list":
             return notes_json
         if args[0] == "cat":
-            return contents[args[1]]
+            return _cat_json(contents[args[1]])
         raise AssertionError(f"unexpected bearcli call: {args}")
 
     orig_bearcli = bearkit.bearcli
@@ -843,7 +902,7 @@ def test_lint_wiki_reports_typo_suggestion_separately():
         if args[0] == "list":
             return notes_json
         if args[0] == "cat":
-            return contents[args[1]]
+            return _cat_json(contents[args[1]])
         raise AssertionError(f"unexpected bearcli call: {args}")
 
     orig_bearcli = bearkit.bearcli
@@ -882,7 +941,7 @@ def test_check_wikilinks_skips_bearkit_tagged_notes():
             note_id = args[1]
             if note_id == "id-2":
                 raise AssertionError("check_wikilinks should not fetch the body of a #bearkit/lists tagged note")
-            return "# Note One\n\nSee [[Missing Note]].\n"
+            return _cat_json("# Note One\n\nSee [[Missing Note]].\n")
         raise AssertionError(f"unexpected bearcli call: {args}")
 
     orig_bearcli = bearkit.bearcli
@@ -913,7 +972,7 @@ def test_lint_wiki_by_tag_builds_report_entries_with_tags():
         if args[0] == "list":
             return notes_json
         if args[0] == "cat":
-            return "# Note One\n\nSee [[Missing Note]].\n"
+            return _cat_json("# Note One\n\nSee [[Missing Note]].\n")
         raise AssertionError(f"unexpected bearcli call: {args}")
 
     orig_bearcli = bearkit.bearcli
@@ -942,7 +1001,7 @@ def test_lint_wiki_mark_rewrites_dangling_link():
         if args[0] == "list":
             return notes_json
         if args[0] == "cat":
-            return contents[args[1]]
+            return _cat_json(contents[args[1]])
         if args[0] == "overwrite":
             written[args[1]] = kwargs.get("stdin")
             return ""
@@ -960,6 +1019,33 @@ def test_lint_wiki_mark_rewrites_dangling_link():
     assert any("Missing Note +" in s for s in sections), sections
 
 
+def test_lint_wiki_mark_passes_cat_hash_as_overwrite_base():
+    notes_json = json.dumps([{"id": "id-1", "title": "Note One", "tags": []}])
+    contents = {"id-1": "# Note One\n\nSee [[Missing Note]].\n"}
+    captured = {}
+
+    def fake_bearcli(*args, **kwargs):
+        if args[0] == "list":
+            return notes_json
+        if args[0] == "cat":
+            return _cat_json(contents[args[1]], note_hash="hash-wiki-1")
+        if args[0] == "overwrite":
+            captured["args"] = args
+            return ""
+        raise AssertionError(f"unexpected bearcli call: {args}")
+
+    orig_bearcli = bearkit.bearcli
+    bearkit.bearcli = fake_bearcli
+    try:
+        bearkit.check_wikilinks(mark=True, yes=True)
+    finally:
+        bearkit.bearcli = orig_bearcli
+
+    args = captured["args"]
+    assert "--base" in args, args
+    assert args[args.index("--base") + 1] == "hash-wiki-1", args
+
+
 def test_lint_wiki_mark_skips_reporting_when_write_fails():
     notes_json = json.dumps([
         {"id": "id-1", "title": "Note One", "tags": []},
@@ -970,7 +1056,7 @@ def test_lint_wiki_mark_skips_reporting_when_write_fails():
         if args[0] == "list":
             return notes_json
         if args[0] == "cat":
-            return contents[args[1]]
+            return _cat_json(contents[args[1]])
         if args[0] == "overwrite":
             raise BearcliError("boom")
         raise AssertionError(f"unexpected bearcli call: {args}")
@@ -1004,7 +1090,7 @@ def test_lint_wiki_mark_dry_run_does_not_write():
         if args[0] == "list":
             return notes_json
         if args[0] == "cat":
-            return contents[args[1]]
+            return _cat_json(contents[args[1]])
         if args[0] == "overwrite":
             raise AssertionError("dry-run should not write")
         raise AssertionError(f"unexpected bearcli call: {args}")
@@ -1040,7 +1126,7 @@ def test_lint_wiki_mark_leaves_typo_suggestions_unmarked():
         if args[0] == "list":
             return notes_json
         if args[0] == "cat":
-            return contents[args[1]]
+            return _cat_json(contents[args[1]])
         if args[0] == "overwrite":
             written[args[1]] = kwargs.get("stdin")
             return ""
@@ -1071,7 +1157,7 @@ def test_lint_wiki_mark_writes_back_unmark_only_changes():
         if args[0] == "list":
             return notes_json
         if args[0] == "cat":
-            return contents[args[1]]
+            return _cat_json(contents[args[1]])
         if args[0] == "overwrite":
             written[args[1]] = kwargs.get("stdin")
             return ""
@@ -1107,7 +1193,7 @@ def test_lint_wiki_mark_handles_marked_and_unmarked_in_same_note():
         if args[0] == "list":
             return notes_json
         if args[0] == "cat":
-            return contents[args[1]]
+            return _cat_json(contents[args[1]])
         if args[0] == "overwrite":
             written[args[1]] = kwargs.get("stdin")
             return ""
@@ -1147,7 +1233,7 @@ def test_lint_wiki_mark_does_not_corrupt_valid_heading_link():
         if args[0] == "list":
             return notes_json
         if args[0] == "cat":
-            return contents[args[1]]
+            return _cat_json(contents[args[1]])
         if args[0] == "overwrite":
             written[args[1]] = kwargs.get("stdin")
             return ""
@@ -1173,7 +1259,7 @@ def test_lint_wiki_without_mark_never_writes():
         if args[0] == "list":
             return notes_json
         if args[0] == "cat":
-            return contents[args[1]]
+            return _cat_json(contents[args[1]])
         if args[0] == "overwrite":
             raise AssertionError("plain --wiki should never write")
         raise AssertionError(f"unexpected bearcli call: {args}")
