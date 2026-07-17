@@ -1947,7 +1947,7 @@ def test_cli_wikilinks_yes_without_mark_rejected():
 def test_cli_wikilinks_mark_allows_dry_run_and_yes():
     captured = {}
 
-    def fake_check_wikilinks(sections=None, by_tag=False, mark=False, dry_run=False, yes=False, tag=None):
+    def fake_check_wikilinks(sections=None, by_tag=False, mark=False, dry_run=False, yes=False, tag=None, note_id=None):
         captured["mark"] = mark
         captured["dry_run"] = dry_run
 
@@ -1960,6 +1960,29 @@ def test_cli_wikilinks_mark_allows_dry_run_and_yes():
     assert exit_code in (None, 0), (exit_code, err)
     assert captured.get("mark") is True, captured
     assert captured.get("dry_run") is True, captured
+
+
+def test_cli_wikilinks_mutually_exclusive_id_and_tag():
+    exit_code, out, err = _run_main(["wikilinks", "-i", "some-id", "-t", "work"])
+    assert exit_code not in (None, 0), exit_code
+
+
+def test_cli_wikilinks_dashes_i_passes_note_id_through():
+    captured = {}
+
+    def fake_check_wikilinks(sections=None, by_tag=False, mark=False, dry_run=False, yes=False, tag=None, note_id=None):
+        captured["note_id"] = note_id
+        captured["tag"] = tag
+
+    orig = _patched("check_wikilinks", fake_check_wikilinks)
+    try:
+        exit_code, out, err = _run_main(["wikilinks", "-i", "some-note-id"])
+    finally:
+        bearkit.check_wikilinks = orig
+
+    assert exit_code in (None, 0), (exit_code, err)
+    assert captured.get("note_id") == "some-note-id", captured
+    assert captured.get("tag") is None, captured
 
 
 def test_cli_lint_mutually_exclusive_id_and_tag():

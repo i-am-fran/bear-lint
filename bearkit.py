@@ -1499,7 +1499,9 @@ def build_arg_parser():
     p_duplicates.add_argument("-t", "--tag", default=None)
 
     p_wikilinks = sub.add_parser("wikilinks", add_help=False)
-    p_wikilinks.add_argument("-t", "--tag", default=None)
+    scope = p_wikilinks.add_mutually_exclusive_group()
+    scope.add_argument("-t", "--tag", default=None)
+    scope.add_argument("-i", "--id", dest="note_id", default=None)
     p_wikilinks.add_argument("--mark", action="store_true")
     p_wikilinks.add_argument("-n", "--dry-run", action="store_true")
     p_wikilinks.add_argument("-y", "--yes", action="store_true")
@@ -1559,7 +1561,8 @@ def main():
         find_duplicates(sections=sections, tag=parsed.tag)
     elif parsed.command == "wikilinks":
         check_wikilinks(
-            sections=sections, by_tag=by_tag, mark=parsed.mark, dry_run=parsed.dry_run, yes=parsed.yes, tag=parsed.tag
+            sections=sections, by_tag=by_tag, mark=parsed.mark, dry_run=parsed.dry_run, yes=parsed.yes,
+            tag=parsed.tag, note_id=parsed.note_id,
         )
     elif parsed.command == "lint":
         if parsed.note_id:
