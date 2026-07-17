@@ -1,6 +1,6 @@
 # BearKit
 
-[Project site](https://i-am-fran.github.io/bear-lint/)
+[Project site](https://i-am-fran.github.io/bearkit/)
 
 A companion tool for [Bear](https://bear.app) notes. It checks and fixes common Markdown inconsistencies, finds orphaned/duplicate/dangling-linked notes, and can open random notes for review — all by reading and writing your notes directly via `bearcli`.
 
@@ -44,20 +44,20 @@ Every action excludes bearkit's own `#bearkit/lists` and `#bearkit/edits` report
 ## Installation
 
 ```bash
-git clone https://github.com/i-am-fran/bear-lint.git
+git clone https://github.com/i-am-fran/bearkit.git
 ```
 
 Then make it runnable as `bearkit` from anywhere. Pick one:
 
 **Alias** (add to `~/.zshrc`):
 ```bash
-alias bearkit='python3 /path/to/bear-lint/bearkit.py'
+alias bearkit='python3 /path/to/bearkit/bearkit.py'
 ```
 
 **Symlink** (makes it a first-class command on your PATH):
 ```bash
-chmod +x /path/to/bear-lint/bearkit.py
-ln -s /path/to/bear-lint/bearkit.py /usr/local/bin/bearkit
+chmod +x /path/to/bearkit/bearkit.py
+ln -s /path/to/bearkit/bearkit.py /usr/local/bin/bearkit
 ```
 
 After either, reload your shell and `bearkit --help` will work.
@@ -159,11 +159,11 @@ Old `#bear-lint`-tagged report notes from bear-lint v1 aren't recognized by bear
 
 ## Changelog
 
-See the [Releases page](https://github.com/i-am-fran/bear-lint/releases) for what changed between versions.
+See the [Releases page](https://github.com/i-am-fran/bearkit/releases) for what changed between versions.
 
 ## Issues
 
-Found a bug or have a feature request? [Open a GitHub issue](https://github.com/i-am-fran/bear-lint/issues) — pull requests aren't accepted, but issue reports are very welcome.
+Found a bug or have a feature request? [Open a GitHub issue](https://github.com/i-am-fran/bearkit/issues) — pull requests aren't accepted, but issue reports are very welcome.
 
 ## License
 
