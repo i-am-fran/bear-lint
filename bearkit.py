@@ -1177,23 +1177,29 @@ def mark_dangling_wikilinks(lines, mask, titles, titles_by_lower):
     return new_lines, marked, unmarked
 
 
-def check_wikilinks(sections=None, by_tag=False, mark=False, dry_run=False, yes=False, tag=None):
+def check_wikilinks(sections=None, by_tag=False, mark=False, dry_run=False, yes=False, tag=None, note_id=None):
     all_notes = list_notes()
     # Target-title resolution always considers the whole vault, even when
-    # -t/tag scopes which notes are scanned as sources - a scoped note can
-    # still legitimately link to something outside its tag.
+    # -t/tag or -i/note_id scopes which notes are scanned as sources - a
+    # scoped note can still legitimately link to something outside its scope.
     titles = {note["title"] for note in all_notes}
     titles_by_lower = {t.lower(): t for t in titles}
 
-    notes = [n for n in all_notes if not has_bearkit_report_tag(n.get("tags", []))]
-    if tag:
-        notes = [n for n in notes if tag_matches(n.get("tags", []), tag)]
+    if note_id:
+        # An explicit ID is a direct request and is always honored, even for
+        # a #bearkit/*-tagged note - self-exclusion only governs automatic
+        # scan sources, not direct access by ID (same rule as lint -i).
+        notes = [n for n in all_notes if n["id"] == note_id]
+    else:
+        notes = [n for n in all_notes if not has_bearkit_report_tag(n.get("tags", []))]
+        if tag:
+            notes = [n for n in notes if tag_matches(n.get("tags", []), tag)]
 
     if not notes:
         print("No notes found.", file=sys.stderr)
         return
 
-    if mark and not yes and not dry_run:
+    if mark and not yes and not dry_run and not note_id:
         if not confirm(f"About to mark dangling wikilinks in {len(notes)} notes — continue?"):
             print("Aborted.", file=sys.stderr)
             return

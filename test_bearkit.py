@@ -963,6 +963,127 @@ def test_check_wikilinks_skips_bearkit_tagged_notes():
     assert "1 notes checked, 1 dangling wikilink(s) found in 1 note(s)." in output, output
 
 
+def test_check_wikilinks_scoped_by_id_only_scans_that_note():
+    notes_json = json.dumps([
+        {"id": "id-1", "title": "Note One", "tags": []},
+        {"id": "id-2", "title": "Note Two", "tags": []},
+    ])
+    contents = {"id-1": "# Note One\n\nSee [[Missing Note]].\n"}
+
+    def fake_bearcli(*args, **kwargs):
+        if args[0] == "list":
+            return notes_json
+        if args[0] == "cat":
+            if args[1] == "id-2":
+                raise AssertionError("check_wikilinks(note_id=...) should not fetch notes outside the id scope")
+            return _cat_json(contents[args[1]])
+        raise AssertionError(f"unexpected bearcli call: {args}")
+
+    orig_bearcli = bearkit.bearcli
+    bearkit.bearcli = fake_bearcli
+
+    import io
+    from contextlib import redirect_stderr
+
+    buf = io.StringIO()
+    sections = []
+    try:
+        with redirect_stderr(buf):
+            bearkit.check_wikilinks(sections=sections, note_id="id-1")
+    finally:
+        bearkit.bearcli = orig_bearcli
+
+    output = buf.getvalue()
+    assert "[[Missing Note]]" in output, output
+    assert len(sections) == 2, sections
+
+
+def test_check_wikilinks_scoped_by_id_not_found_reports_no_notes():
+    notes_json = json.dumps([{"id": "id-1", "title": "Note One", "tags": []}])
+
+    def fake_bearcli(*args, **kwargs):
+        if args[0] == "list":
+            return notes_json
+        raise AssertionError(f"unexpected bearcli call: {args}")
+
+    orig_bearcli = bearkit.bearcli
+    bearkit.bearcli = fake_bearcli
+
+    import io
+    from contextlib import redirect_stderr
+
+    buf = io.StringIO()
+    try:
+        with redirect_stderr(buf):
+            bearkit.check_wikilinks(note_id="nonexistent-id")
+    finally:
+        bearkit.bearcli = orig_bearcli
+
+    assert "No notes found." in buf.getvalue(), buf.getvalue()
+
+
+def test_check_wikilinks_scoped_by_id_includes_bearkit_tagged_note():
+    # -i is an explicit request and must be honored even if the note happens
+    # to carry a #bearkit/* tag - self-exclusion only governs automatic scan
+    # sources, not direct access by ID (same rule as lint -i).
+    notes_json = json.dumps([
+        {"id": "id-1", "title": "BearKit Wikilinks Report — 2026-01-01 00:00", "tags": ["#bearkit", "#bearkit/lists"]},
+    ])
+    contents = {"id-1": "# BearKit Wikilinks Report\n\nSee [[Missing Note]].\n"}
+
+    def fake_bearcli(*args, **kwargs):
+        if args[0] == "list":
+            return notes_json
+        if args[0] == "cat":
+            return _cat_json(contents[args[1]])
+        raise AssertionError(f"unexpected bearcli call: {args}")
+
+    orig_bearcli = bearkit.bearcli
+    bearkit.bearcli = fake_bearcli
+
+    import io
+    from contextlib import redirect_stderr
+
+    buf = io.StringIO()
+    sections = []
+    try:
+        with redirect_stderr(buf):
+            bearkit.check_wikilinks(sections=sections, note_id="id-1")
+    finally:
+        bearkit.bearcli = orig_bearcli
+
+    assert "[[Missing Note]]" in buf.getvalue(), buf.getvalue()
+    assert len(sections) == 2, sections
+
+
+def test_check_wikilinks_mark_with_id_skips_confirmation():
+    notes_json = json.dumps([{"id": "id-1", "title": "Note One", "tags": []}])
+    contents = {"id-1": "# Note One\n\nSee [[Missing Note]].\n"}
+
+    def fake_input(prompt):
+        raise AssertionError("an explicit -i target must not prompt for confirmation")
+
+    def fake_bearcli(*args, **kwargs):
+        if args[0] == "list":
+            return notes_json
+        if args[0] == "cat":
+            return _cat_json(contents[args[1]])
+        if args[0] == "overwrite":
+            return ""
+        raise AssertionError(f"unexpected bearcli call: {args}")
+
+    import builtins
+    orig_input = builtins.input
+    orig_bearcli = bearkit.bearcli
+    builtins.input = fake_input
+    bearkit.bearcli = fake_bearcli
+    try:
+        bearkit.check_wikilinks(mark=True, note_id="id-1")
+    finally:
+        builtins.input = orig_input
+        bearkit.bearcli = orig_bearcli
+
+
 def test_lint_wiki_by_tag_builds_report_entries_with_tags():
     notes_json = json.dumps([
         {"id": "id-1", "title": "Note One", "tags": ["#work"]},
