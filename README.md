@@ -74,6 +74,7 @@ bearkit wikilinks                    # list [[wikilinks]] with no matching note
 bearkit wikilinks --mark             # ...and mark dangling wikilinks in place (" +")
 bearkit wikilinks --mark -y          # ...same, but skip the confirmation prompt
 bearkit wikilinks --mark -n          # preview which notes would be marked, without writing
+bearkit wikilinks -i <note-id>       # check a single note by ID (no confirmation)
 bearkit lint                         # lint every note (asks for confirmation)
 bearkit lint -t work                 # ...only notes tagged #work
 bearkit lint -t work -y              # ...same, but skip the confirmation prompt
@@ -97,11 +98,13 @@ Add `-y` / `--yes` (on `lint`, `wikilinks --mark`) to skip the confirmation prom
 
 Add `--mark` (with `wikilinks`) to go a step further: instead of only reporting a dangling target, it rewrites the wikilink in the note itself, appending a trailing marker — `[[Wikilink]]` becomes `[[Wikilink +]]` — so it stands out right inside Bear's own UI. Only targets with no typo suggestion are marked (a likely typo is left for the "did you mean" report to guide a manual fix instead). A heading or alias link that resolves to a real note is never marked; a genuinely dangling one keeps its `/Heading` and/or `|Alias` text intact, with the `" +"` marker appended at the very end. Marking is idempotent and self-healing: re-running never doubles the marker, and once the target note actually gets created, its `" +"` is automatically stripped back off on the next run.
 
+Add `-i <note-id>` (on `lint`, `wikilinks`) to scope to a single note directly instead of a tag/vault-wide scan — mutually exclusive with `-t`. Like `lint -i`, it skips the confirmation prompt and is honored even if the note happens to carry a `#bearkit/*` tag, since self-exclusion only governs automatic scan sources, not direct access by ID.
+
 ## Actions in depth
 
 ### `wikilinks`
 
-Scans every note for `[[wikilinks]]` (reusing the same well-formed-link detection as `lint`'s per-note check), fetches every note's title via `bearcli list`, and flags any wikilink whose target doesn't match an existing note title. Bear's native `[[Note/Heading]]` (heading link) and `[[Note|Alias]]` (alias link, display text only — these may combine as `[[Note/Heading|Alias]]`) syntax is recognized: the note-title portion is resolved from the compound target before being checked against real titles, so a valid heading or alias link is never misflagged as dangling. A dangling target is further checked against every real note title for a likely typo — an exact case-insensitive match, or a close match via `difflib.get_close_matches` — and if one is found, it renders as `- [[target]] → possible typo, did you mean [[Real Title]]?` instead of a plain bullet. `-t` scopes which notes are scanned as *sources*, but target resolution always considers the whole vault, since a scoped note can still legitimately link to something outside its tag.
+Scans every note for `[[wikilinks]]` (reusing the same well-formed-link detection as `lint`'s per-note check), fetches every note's title via `bearcli list`, and flags any wikilink whose target doesn't match an existing note title. Bear's native `[[Note/Heading]]` (heading link) and `[[Note|Alias]]` (alias link, display text only — these may combine as `[[Note/Heading|Alias]]`) syntax is recognized: the note-title portion is resolved from the compound target before being checked against real titles, so a valid heading or alias link is never misflagged as dangling. A dangling target is further checked against every real note title for a likely typo — an exact case-insensitive match, or a close match via `difflib.get_close_matches` — and if one is found, it renders as `- [[target]] → possible typo, did you mean [[Real Title]]?` instead of a plain bullet. `-t` scopes which notes are scanned as *sources*, but target resolution always considers the whole vault, since a scoped note can still legitimately link to something outside its tag. `-i <note-id>` scopes to one specific note the same way.
 
 ### `orphans`
 

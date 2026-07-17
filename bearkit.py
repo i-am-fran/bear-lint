@@ -26,7 +26,7 @@ import sys
 from dataclasses import dataclass, field
 from datetime import datetime
 
-__version__ = "2.0.1"
+__version__ = "2.0.2"
 
 BEARCLI_FALLBACK = "/Applications/Bear.app/Contents/MacOS/bearcli"
 
@@ -1392,6 +1392,8 @@ USAGE
   bearkit duplicates [options]         List notes that share the same title.
   bearkit wikilinks [options]          List [[wikilinks]] whose target note
                                         doesn't exist.
+  bearkit wikilinks -i <note-id>       ...scoped to a single note by ID.
+                                        Never asks for confirmation.
   bearkit wikilinks --mark [options]   ...and mark each one in the note
                                         itself by appending " +", e.g.
                                         [[Wikilink]] -> [[Wikilink +]]. Marks
@@ -1431,9 +1433,9 @@ OPTIONS
   -t, --tag <tagName>  Scope to notes tagged <tagName> (and its nested
                        tags, e.g. -t people also matches #people/authors).
                        Available on every action.
-  -i, --id <noteID>    Lint a single note by ID instead of a tag/vault-wide
-                       scan. Only on lint; mutually exclusive with -t.
-                       Skips the confirmation prompt.
+  -i, --id <noteID>    Scope to a single note by ID instead of a tag/
+                       vault-wide scan. On lint and wikilinks; mutually
+                       exclusive with -t. Skips the confirmation prompt.
   --mark               With wikilinks, mark each dangling wikilink in the
                        note itself instead of only reporting it. Targets
                        with a likely typo suggestion are left unmarked.
@@ -1456,6 +1458,7 @@ EXAMPLES
   bearkit wikilinks
   bearkit wikilinks --mark
   bearkit wikilinks --mark -t evergreen -y
+  bearkit wikilinks -i 6F98051A-0000-1111-2222-9444C3615B10
   bearkit lint
   bearkit lint -t work -n
   bearkit lint -i 6F98051A-0000-1111-2222-9444C3615B10
