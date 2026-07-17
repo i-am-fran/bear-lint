@@ -5,8 +5,8 @@
 <meta http-equiv="X-UA-Compatible" content="IE=edge">
 <meta name="viewport" content="width=device-width, initial-scale=1, minimum-scale=1.0, shrink-to-fit=no">
 <link href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%90%BB%3C/text%3E%3C/svg%3E" rel="icon" />
-<title>bear-lint — a dependency-free linter for Bear notes</title>
-<meta name="description" content="bear-lint is a dependency-free Python linter and fixer for Bear notes: bullet markers, emphasis style, checklists, headings, tags, wikilinks and more.">
+<title>bearkit — a dependency-free companion tool for Bear notes</title>
+<meta name="description" content="bearkit is a dependency-free Python companion tool for Bear notes: lints and fixes Markdown, finds orphaned/duplicate/dangling-linked notes, and opens random notes for review.">
 <meta name="author" content="Fran">
 
 <!-- Stylesheet
@@ -48,8 +48,8 @@
         <button id="sidebarCollapse" class="navbar-toggler d-block d-md-none" type="button"><span></span><span class="w-75"></span><span class="w-50"></span></button>
 
         <!-- Logo -->
-        <a class="logo ml-md-3" href="#idocs_start" title="bear-lint">🐻&nbsp;bear-lint</a>
-        <span class="text-2 ml-2">v1.5.0</span>
+        <a class="logo ml-md-3" href="#idocs_start" title="bearkit">🐻&nbsp;bearkit</a>
+        <span class="text-2 ml-2">v2.0.1</span>
         <!-- Logo End -->
 
         <!-- Navbar Toggler -->
@@ -57,13 +57,13 @@
 
         <div id="header-nav" class="collapse navbar-collapse justify-content-end">
           <ul class="navbar-nav">
-            <li><a target="_blank" href="https://github.com/i-am-fran/bear-lint">GitHub</a></li>
-            <li><a target="_blank" href="https://github.com/i-am-fran/bear-lint/issues">Issues</a></li>
-            <li><a target="_blank" href="https://github.com/i-am-fran/bear-lint/releases">Releases</a></li>
+            <li><a target="_blank" href="https://github.com/i-am-fran/bearkit">GitHub</a></li>
+            <li><a target="_blank" href="https://github.com/i-am-fran/bearkit/issues">Issues</a></li>
+            <li><a target="_blank" href="https://github.com/i-am-fran/bearkit/releases">Releases</a></li>
           </ul>
         </div>
         <ul class="social-icons social-icons-sm ml-lg-2 mr-2">
-          <li class="social-icons-github"><a data-toggle="tooltip" href="https://github.com/i-am-fran/bear-lint" target="_blank" title="" data-original-title="GitHub"><i class="fab fa-github"></i></a></li>
+          <li class="social-icons-github"><a data-toggle="tooltip" href="https://github.com/i-am-fran/bearkit" target="_blank" title="" data-original-title="GitHub"><i class="fab fa-github"></i></a></li>
         </ul>
       </div>
     </nav>
@@ -85,17 +85,20 @@
             <li class="nav-item"><a class="nav-link" href="#idocs_requirements">Requirements</a></li>
           </ul>
         </li>
-        <li class="nav-item"><a class="nav-link" href="#idocs_rules">What it Checks</a></li>
+        <li class="nav-item"><a class="nav-link" href="#idocs_rules">What <code>lint</code> Checks</a></li>
         <li class="nav-item"><a class="nav-link" href="#idocs_usage">Usage</a>
           <ul class="nav flex-column">
             <li class="nav-item"><a class="nav-link" href="#idocs_usage_basic">Basic Commands</a></li>
-            <li class="nav-item"><a class="nav-link" href="#idocs_usage_reports">Saving Reports</a></li>
-            <li class="nav-item"><a class="nav-link" href="#idocs_usage_wiki">Wikilinks &amp; Orphans</a></li>
+            <li class="nav-item"><a class="nav-link" href="#idocs_usage_lists">Lists</a></li>
+            <li class="nav-item"><a class="nav-link" href="#idocs_usage_edits">Edits</a></li>
+            <li class="nav-item"><a class="nav-link" href="#idocs_usage_open">Open</a></li>
+            <li class="nav-item"><a class="nav-link" href="#idocs_usage_flags">Flags</a></li>
           </ul>
         </li>
         <li class="nav-item"><a class="nav-link" href="#idocs_selftest">Try it Safely</a></li>
         <li class="nav-item"><a class="nav-link" href="#idocs_testing">Testing</a></li>
         <li class="nav-item"><a class="nav-link" href="#idocs_safety">Safety &amp; Limitations</a></li>
+        <li class="nav-item"><a class="nav-link" href="#idocs_upgrading">Upgrading from bear-lint</a></li>
         <li class="nav-item"><a class="nav-link" href="#idocs_license">License</a></li>
       </ul>
     </div>
@@ -108,14 +111,21 @@
         <!-- Overview
         ============================ -->
         <section id="idocs_start">
-        <h1>bear-lint</h1>
-        <h2>A dependency-free linter for Bear notes</h2>
-        <p class="lead">A small Markdown linter for <a href="https://bear.app" target="_blank">Bear</a> notes. It checks and fixes common Markdown inconsistencies — bullet markers, emphasis style, checklist syntax, heading structure, tags, and more — by reading and writing your notes directly via <code>bearcli</code>.</p>
+        <h1>bearkit</h1>
+        <h2>A dependency-free companion tool for Bear notes</h2>
+        <p class="lead">A companion tool for <a href="https://bear.app" target="_blank">Bear</a> notes. It checks and fixes common Markdown inconsistencies, finds orphaned/duplicate/dangling-linked notes, and can open random notes for review — all by reading and writing your notes directly via <code>bearcli</code>.</p>
+        <p>Actions split into three categories:</p>
+        <ul>
+          <li><strong>Lists</strong> (<code>orphans</code>, <code>duplicates</code>, <code>wikilinks</code>) never change your notes, and automatically save their report as a new Bear note tagged <code>#bearkit/lists</code>.</li>
+          <li><strong>Edits</strong> (<code>lint</code>, <code>wikilinks --mark</code>) change your notes, and automatically save a summary as a new Bear note tagged <code>#bearkit/edits</code> — unless run with <code>--dry-run</code>. They ask for confirmation first unless <code>-y</code>/<code>--yes</code> is given.</li>
+          <li><strong>Open</strong> (<code>random</code>) opens notes in the Bear app and never creates a summary note.</li>
+        </ul>
+        <p>Every action excludes bearkit's own <code>#bearkit/lists</code> and <code>#bearkit/edits</code> report notes from its scans, so past reports never show up as orphans, duplicates, or lint/wikilink findings.</p>
         <hr>
         <div class="row">
           <div class="col-sm-6 col-lg-4">
             <ul class="list-unstyled">
-              <li><strong>Version:</strong> 1.5.0</li>
+              <li><strong>Version:</strong> 2.0.1</li>
               <li><strong>Author:</strong> Fran</li>
             </ul>
           </div>
@@ -126,7 +136,7 @@
             </ul>
           </div>
         </div>
-        <p class="alert alert-info">Found a bug or have a feature request? <a target="_blank" href="https://github.com/i-am-fran/bear-lint/issues">Open a GitHub issue</a> — pull requests aren't accepted, but issue reports are very welcome.</p>
+        <p class="alert alert-info">Found a bug or have a feature request? <a target="_blank" href="https://github.com/i-am-fran/bearkit/issues">Open a GitHub issue</a> — pull requests aren't accepted, but issue reports are very welcome.</p>
         </section>
 
         <hr class="divider">
@@ -135,19 +145,19 @@
         ============================ -->
         <section id="idocs_installation">
           <h2>Installation</h2>
-          <p class="lead">Clone the repo, then make <code>bear-lint</code> runnable from anywhere:</p>
-          <pre><code class="bash">git clone https://github.com/i-am-fran/bear-lint.git</code></pre>
+          <p class="lead">Clone the repo, then make <code>bearkit</code> runnable from anywhere:</p>
+          <pre><code class="bash">git clone https://github.com/i-am-fran/bearkit.git</code></pre>
 
           <h3 class="mt-5">Alias</h3>
           <p>Add to <code>~/.zshrc</code>:</p>
-          <pre><code class="bash">alias bear-lint='python3 /path/to/bear-lint/bear_lint.py'</code></pre>
+          <pre><code class="bash">alias bearkit='python3 /path/to/bearkit/bearkit.py'</code></pre>
 
           <h3 class="mt-5">Symlink</h3>
           <p>Makes it a first-class command on your <code>PATH</code>:</p>
-          <pre><code class="bash">chmod +x /path/to/bear-lint/bear_lint.py
-ln -s /path/to/bear-lint/bear_lint.py /usr/local/bin/bear-lint</code></pre>
+          <pre><code class="bash">chmod +x /path/to/bearkit/bearkit.py
+ln -s /path/to/bearkit/bearkit.py /usr/local/bin/bearkit</code></pre>
 
-          <p class="alert alert-info">After either, reload your shell and <code>bear-lint --help</code> will work.</p>
+          <p class="alert alert-info">After either, reload your shell and <code>bearkit --help</code> will work.</p>
 
           <div id="idocs_requirements">
           <h3 class="mt-5">Requirements</h3>
@@ -160,10 +170,10 @@ ln -s /path/to/bear-lint/bear_lint.py /usr/local/bin/bear-lint</code></pre>
 
         <hr class="divider">
 
-        <!-- What it Checks
+        <!-- What lint Checks
         ============================ -->
         <section id="idocs_rules">
-          <h2>What it Checks</h2>
+          <h2>What <code>lint</code> Checks</h2>
           <p class="text-4">Every rule below runs automatically when you lint a note. Most auto-fix in place; a few are report-only because fixing them could change what the note actually means.</p>
 
           <table class="table table-bordered table-striped">
@@ -194,7 +204,7 @@ ln -s /path/to/bear-lint/bear_lint.py /usr/local/bin/bear-lint</code></pre>
             </tbody>
           </table>
 
-          <p><code>--wiki</code>/<code>-w</code> and <code>--orphans</code> are separate, vault-wide commands (see Usage below): <code>--wiki</code> reports <code>[[wikilinks]]</code> pointing to notes that don't exist, <code>--orphans</code> reports notes that no other note links to. Neither is one of the per-note rules above since both need every note's title and links compared against the whole vault, not just the one note being linted.</p>
+          <p><code>wikilinks</code>, <code>orphans</code> and <code>duplicates</code> are separate, vault-wide commands (see Usage below): <code>wikilinks</code> reports <code>[[wikilinks]]</code> pointing to notes that don't exist (optionally marking them in place with <code>--mark</code>), <code>orphans</code> reports notes that no other note links to, and <code>duplicates</code> reports notes that share the same title. None of these are per-note <code>lint</code> rules, since all three need every note's title and links compared against the whole vault, not just the one note being linted.</p>
         </section>
 
         <hr class="divider">
@@ -203,37 +213,54 @@ ln -s /path/to/bear-lint/bear_lint.py /usr/local/bin/bear-lint</code></pre>
         ============================ -->
         <section id="idocs_usage">
           <h2>Usage</h2>
-          <p class="text-4">Get a note's ID from <code>bearcli list</code> or <code>bearcli search "query"</code>. Output shows <code>Title (id): N issue(s) fixed</code>. Issue reports go to stderr; exit code is 0 on success.</p>
+          <p class="text-4">Get a note's ID from <code>bearcli list</code> or <code>bearcli search "query"</code>.</p>
 
           <div id="idocs_usage_basic">
           <h3 class="mt-5">Basic Commands</h3>
-          <pre><code class="bash">bear-lint --help                 # show all commands
-bear-lint --version              # print the installed version
-bear-lint &lt;note-id&gt;              # lint one note by ID
-bear-lint --all                  # lint all notes (always asks for confirmation first)
-bear-lint -a "#tag"              # -a is a short alias for --all
-bear-lint --all "#tag"           # lint notes matching a Bear search query (also confirms first)
-bear-lint --all "#tag" -y        # skip the confirmation prompt (cron/launchd-friendly)
-bear-lint &lt;note-id&gt; -n           # preview the diff without writing anything back
-bear-lint --all -n               # preview every note's changes without writing (no prompt)</code></pre>
+          <pre><code class="bash">bearkit --help                       # show all commands
+bearkit --version                    # print the installed version
+bearkit --selftest                   # sanity check against a built-in sample note</code></pre>
           </div>
 
-          <div id="idocs_usage_reports">
-          <h3 class="mt-5">Saving Reports</h3>
-          <pre><code class="bash">bear-lint &lt;note-id&gt; -o           # lint one note and also save the report as a Bear note
-bear-lint --all "#tag" -o        # same, for a batch run
-bear-lint --all -o -t            # save the report grouped by tag (H2 tag, H3 note title)</code></pre>
-          <p>Add <code>-o</code> / <code>--output</code> to also save the report inside Bear: a new note per run, titled <code>Bear Lint Report — &lt;timestamp&gt;</code> and tagged <code>#bear-lint</code>. Each linted note gets a <code>[[wikilink]]</code> heading back to it; issues needing manual attention render as <code>&gt; [!WARNING]</code> callouts, stub notes as <code>&gt; [!TIP]</code>, and auto-fixed issues as a plain bullet list.</p>
-          <p>Add <code>-t</code> / <code>--by-tag</code> to reorganize that same <code>-o</code> report by Bear tag instead of a flat list — requires <code>-o</code>.</p>
+          <div id="idocs_usage_lists">
+          <h3 class="mt-5">Lists</h3>
+          <p>Read-only vault reports. Each run always saves its report as a new Bear note tagged <code>#bearkit/lists</code>.</p>
+          <pre><code class="bash">bearkit orphans                      # list notes with no incoming [[wikilinks]]
+bearkit orphans -t work               # ...scoped to notes tagged #work
+bearkit duplicates                   # list notes that share the same title
+bearkit wikilinks                    # list [[wikilinks]] with no matching note</code></pre>
           </div>
 
-          <div id="idocs_usage_wiki">
-          <h3 class="mt-5">Wikilinks &amp; Orphans</h3>
-          <pre><code class="bash">bear-lint --wiki                 # vault-wide: report [[wikilinks]] with no matching note
-bear-lint --wiki -o              # ...and save the report as a Bear note
-bear-lint --orphans              # vault-wide: report notes with no incoming [[wikilinks]]
-bear-lint --orphans -o           # ...and save the report as a Bear note</code></pre>
-          <p><code>--wiki</code> scans every note for <code>[[wikilinks]]</code> and flags any whose target doesn't match an existing note title. <code>--orphans</code> is the mirror image: notes that nothing else links to. Both are standalone command modes — they can't be combined with a note ID, <code>--all</code>, <code>--dry-run</code>, or each other, but can be combined with <code>-o</code>. Notes tagged <code>#bear-lint</code> (bear-lint's own report notes) are excluded from both scans.</p>
+          <div id="idocs_usage_edits">
+          <h3 class="mt-5">Edits</h3>
+          <p>Write actions. Each run asks for confirmation first (unless <code>-y</code>) and always saves a summary as a new Bear note tagged <code>#bearkit/edits</code> — unless run with <code>--dry-run</code>, since nothing was actually changed.</p>
+          <pre><code class="bash">bearkit lint                         # lint every note (asks for confirmation)
+bearkit lint -t work                 # ...only notes tagged #work
+bearkit lint -t work -y              # ...same, but skip the confirmation prompt
+bearkit lint -n                      # preview every note's changes without writing (no prompt)
+bearkit lint -i &lt;note-id&gt;            # lint a single note by ID (no confirmation)
+bearkit lint -i &lt;note-id&gt; -n         # ...preview the diff without writing it
+bearkit wikilinks --mark             # mark dangling wikilinks in place (" +")
+bearkit wikilinks --mark -y          # ...same, but skip the confirmation prompt
+bearkit wikilinks --mark -n          # preview which notes would be marked, without writing</code></pre>
+          <p>Add <code>--mark</code> (with <code>wikilinks</code>) to go a step further: instead of only reporting a dangling target, it rewrites the wikilink in the note itself, appending a trailing marker — <code>[[Wikilink]]</code> becomes <code>[[Wikilink +]]</code> — so it stands out right inside Bear's own UI. Marking is idempotent and self-healing: re-running never doubles the marker, and once the target note actually gets created, its <code>" +"</code> is automatically stripped back off on the next run.</p>
+          </div>
+
+          <div id="idocs_usage_open">
+          <h3 class="mt-5">Open</h3>
+          <p>Opens notes directly in the Bear app. Never creates a summary note.</p>
+          <pre><code class="bash">bearkit random                       # open one random note in Bear
+bearkit random 4 -t evergreen        # open 4 random notes tagged #evergreen</code></pre>
+          </div>
+
+          <div id="idocs_usage_flags">
+          <h3 class="mt-5">Flags</h3>
+          <ul>
+            <li><code>-t &lt;tagName&gt;</code> scopes any command to notes carrying that Bear tag — nested tags match too, so <code>-t people</code> also matches a note only tagged <code>#people/authors</code>.</li>
+            <li><code>--group-by-tag</code> (on <code>orphans</code>, <code>wikilinks</code>, <code>lint</code>) reorganizes the summary note by Bear tag instead of a flat list.</li>
+            <li><code>-n</code> / <code>--dry-run</code> (on <code>lint</code>, <code>wikilinks --mark</code>) previews what would change — a unified diff per note — without writing anything back or creating a summary note. Skips the confirmation prompt too, since nothing destructive happens.</li>
+            <li><code>-y</code> / <code>--yes</code> (on <code>lint</code>, <code>wikilinks --mark</code>) skips the confirmation prompt, e.g. from cron or launchd.</li>
+          </ul>
           </div>
         </section>
 
@@ -244,8 +271,8 @@ bear-lint --orphans -o           # ...and save the report as a Bear note</code><
         <section id="idocs_selftest">
           <h2>Try it Safely</h2>
           <p class="text-4">No Bear notes touched, no setup required:</p>
-          <pre><code class="bash">python3 bear_lint.py --selftest</code></pre>
-          <p>This runs every rule against a bundled sample note and prints the fixed text plus a report, so you can see exactly what bear-lint does before pointing it at your real vault.</p>
+          <pre><code class="bash">python3 bearkit.py --selftest</code></pre>
+          <p>This runs every rule against a bundled sample note and prints the fixed text plus a report, so you can see exactly what bearkit does before pointing it at your real vault.</p>
         </section>
 
         <hr class="divider">
@@ -254,8 +281,8 @@ bear-lint --orphans -o           # ...and save the report as a Bear note</code><
         ============================ -->
         <section id="idocs_testing">
           <h2>Testing</h2>
-          <p><code>test_bear_lint.py</code> is a plain assert-based test suite (no pytest) covering each rule in isolation plus an idempotency check — running <code>lint_note()</code> twice on the same input must produce identical output the second time, which catches autofixes that re-trigger each other.</p>
-          <pre><code class="bash">python3 test_bear_lint.py</code></pre>
+          <p><code>test_bearkit.py</code> is a plain assert-based test suite (no pytest) covering each rule and command in isolation plus an idempotency check — running <code>lint_note()</code> twice on the same input must produce identical output the second time, which catches autofixes that re-trigger each other.</p>
+          <pre><code class="bash">python3 test_bearkit.py</code></pre>
           <p><code>test-note.md</code> in the repo is a single note deliberately built to trigger every rule at once — import it into Bear and lint it to validate end-to-end.</p>
         </section>
 
@@ -274,7 +301,17 @@ bear-lint --orphans -o           # ...and save the report as a Bear note</code><
             <li>Heuristic-based, not a full Markdown parser. Handles fenced code blocks, inline code spans, and YAML frontmatter as protected regions, but very unusual formatting may confuse a rule or two.</li>
             <li>A few rules are report-only by design (missing/duplicate H1, heading-level skips, stub notes, tag format, wiki-link problems), because auto-fixing them risks changing the note's actual structure or meaning.</li>
             <li>Locked/encrypted Bear notes are skipped automatically.</li>
+            <li><code>random count</code> silently clamps to the number of available notes rather than erroring if you ask for more than exist in scope.</li>
           </ul>
+        </section>
+
+        <hr class="divider">
+
+        <!-- Upgrading from bear-lint
+        ============================ -->
+        <section id="idocs_upgrading">
+          <h2>Upgrading from bear-lint</h2>
+          <p>bearkit is the renamed, restructured v2 successor to <code>bear-lint</code>. Old <code>#bear-lint</code>-tagged report notes from v1 aren't recognized by bearkit's <code>#bearkit/*</code> self-exclusion, so they won't automatically stay out of scans. Search <code>#bear-lint</code> in Bear and delete them manually once you've confirmed you no longer need them.</p>
         </section>
 
         <hr class="divider">
@@ -283,8 +320,8 @@ bear-lint --orphans -o           # ...and save the report as a Bear note</code><
         ============================ -->
         <section id="idocs_license">
           <h2>License</h2>
-          <p>bear-lint is released under the MIT License. See the <a target="_blank" href="https://github.com/i-am-fran/bear-lint/blob/main/LICENSE">LICENSE</a> file for full terms.</p>
-          <p class="alert alert-info">See the <a target="_blank" href="https://github.com/i-am-fran/bear-lint/releases">Releases page</a> for what changed between versions.</p>
+          <p>bearkit is released under the MIT License. See the <a target="_blank" href="https://github.com/i-am-fran/bearkit/blob/main/LICENSE">LICENSE</a> file for full terms.</p>
+          <p class="alert alert-info">See the <a target="_blank" href="https://github.com/i-am-fran/bearkit/releases">Releases page</a> for what changed between versions.</p>
         </section>
 
       </div>
@@ -298,10 +335,10 @@ bear-lint --orphans -o           # ...and save the report as a Bear note</code><
   <footer id="footer" class="section bg-dark footer-text-light">
     <div class="container">
       <ul class="social-icons social-icons-lg social-icons-muted justify-content-center mb-3">
-        <li><a data-toggle="tooltip" href="https://github.com/i-am-fran/bear-lint" target="_blank" title="" data-original-title="GitHub"><i class="fab fa-github"></i></a></li>
-        <li><a data-toggle="tooltip" href="https://github.com/i-am-fran/bear-lint/issues" target="_blank" title="" data-original-title="Issues"><i class="fas fa-bug"></i></a></li>
+        <li><a data-toggle="tooltip" href="https://github.com/i-am-fran/bearkit" target="_blank" title="" data-original-title="GitHub"><i class="fab fa-github"></i></a></li>
+        <li><a data-toggle="tooltip" href="https://github.com/i-am-fran/bearkit/issues" target="_blank" title="" data-original-title="Issues"><i class="fas fa-bug"></i></a></li>
       </ul>
-      <p class="text-center">bear-lint — MIT Licensed. <a href="https://github.com/i-am-fran/bear-lint">View on GitHub</a>.</p>
+      <p class="text-center">bearkit — MIT Licensed. <a href="https://github.com/i-am-fran/bearkit">View on GitHub</a>.</p>
       <p class="text-2 text-center mb-0">Built on the <a class="btn-link" target="_blank" href="https://github.com/harnishdesign/iDocs">iDocs</a> template by <a class="btn-link" target="_blank" href="http://www.harnishdesign.net/">Harnish Design</a> (MIT).</p>
     </div>
   </footer>
